@@ -2,8 +2,20 @@
 
 Embeds function-level and file-level chunks extracted from Python source and
 stores them in a persistent local Chroma collection.  Each document is keyed
-by a deterministic ID so re-running on an unchanged repository does NOT
-duplicate entries.
+by a deterministic ID derived from ``repo``, file path, qualname, and line
+range, so re-running on an *unchanged* repository does not duplicate entries.
+
+That is the only case this is safe for. There is no delete path: stale
+documents are never removed from the collection. Because the line range is
+part of the key, any edit that shifts line numbers re-keys the chunk and
+strands the previous copy forever; deleting a function or a whole file
+leaves its old chunks in the store with no way to detect or prune them
+through this module. ``embed_repository``'s return value counts documents
+written in that run, not what the collection holds, so it cannot reveal
+this drift — a file deleted from disk can still be returned by ``query()``.
+Until a repo-scoped delete/reconcile path exists, the only safe way to
+re-embed a repository whose source has changed is to delete the `.chroma/`
+directory and rebuild the store from empty.
 
 The collection holds embeddings for many repositories; every document carries
 a ``repo`` metadata field so results can be filtered per repository.
