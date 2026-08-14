@@ -153,15 +153,23 @@ sending full file contents or the whole repo to the LLM.
 This repo is worked on by a small Claude Code agent team defined in
 `.claude/agents/`. Five roles, split by the surfaces this project actually has:
 
-| Agent | Owns |
-| --- | --- |
-| `orchestrator` | Routes work, opens PRs, merges to `master`. Delegates only — no `Edit`/`Write` |
-| `indexer` | The write path — `ingest/`, `graph/` |
-| `retrieval` | The read path — `embeddings/`, `retrieval/`, `agents/`, `cli/` |
-| `reviewer` | Adversarial read on escalation paths. Read-only, never merges |
-| `scout` | Free local-model summaries and read-only graph queries |
+| Agent | Owns | Runs on |
+| --- | --- | --- |
+| `orchestrator` | Routes work, opens PRs, merges to `master`. Delegates only — no `Edit`/`Write` | Claude Code |
+| `indexer` | The write path — `ingest/`, `graph/` | **Copilot** by default |
+| `retrieval` | The read path — `embeddings/`, `retrieval/`, `agents/`, `cli/` | **Copilot** by default |
+| `reviewer` | Adversarial read on escalation paths. Read-only, never merges | Claude Code |
+| `scout` | Free local-model summaries and read-only graph queries | local Ollama |
 
-- `docs/agent_org_chart.md` — the roster, and why it is five roles rather than seven
+`indexer` and `retrieval` exist on both substrates — as Copilot agents in
+`.github/agents/` and as Claude Code subagents in `.claude/agents/`. Both read
+`CLAUDE.md`, so the rules are identical and only the cost differs;
+implementation work defaults to Copilot. `.github/instructions/*.instructions.md`
+carries the same rules into plain Copilot chat through `applyTo` globs, so
+editing anything under `graph/` picks them up without selecting an agent.
+
+- `CLAUDE.md` — the shared contract, loaded automatically by both Copilot and Claude Code
+- `docs/agent_org_chart.md` — the roster, the two substrates, and why it is five roles rather than seven
 - `docs/agent_governance.md` — the tiers, the escalation paths, and the evidence behind them
 
 `orchestrator` merges into `master` on its own authority once the merge

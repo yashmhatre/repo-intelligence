@@ -86,16 +86,22 @@ existing on these paths and not on ordinary code.
 
 ## Ownership
 
-| Surface | Agent |
-| --- | --- |
-| `ingest/` — AST parsing, git history extraction | `indexer` |
-| `graph/` — Neo4j schema, loading, Cypher | `indexer` |
-| `embeddings/`, `retrieval/`, `agents/` — the read path | `retrieval` |
-| `cli/` — Typer entrypoints | `retrieval` |
-| `tests/` | whichever agent owns the code under test |
-| `README.md`, `docs/` | the agent making the change it documents |
-| Pre-merge review on an escalation path | `reviewer` |
-| Summaries, issue triage, cheap graph queries | `scout` |
+| Surface | Agent | Substrate |
+| --- | --- | --- |
+| `ingest/` — AST parsing, git history extraction | `indexer` | Copilot by default |
+| `graph/` — Neo4j schema, loading, Cypher | `indexer` | Copilot by default |
+| `embeddings/`, `retrieval/`, `agents/` — the read path | `retrieval` | Copilot by default |
+| `cli/` — Typer entrypoints | `retrieval` | Copilot by default |
+| `tests/` | whichever agent owns the code under test | follows that agent |
+| `README.md`, `docs/` | the agent making the change it documents | follows that agent |
+| Pre-merge review on an escalation path | `reviewer` | Claude Code only |
+| Summaries, issue triage, cheap graph queries | `scout` | local Ollama |
+
+Substrate is a cost decision, not a rules decision: `CLAUDE.md` is loaded by
+both Copilot and Claude Code, so the same constraints apply either way. See
+`docs/agent_org_chart.md` for which file backs which half, and note that a
+change on an escalation path still needs a Claude-side `reviewer` verdict
+whichever substrate wrote it.
 
 `indexer` owns both `ingest/` and `graph/` on purpose. They are one
 transaction: a parser change that adds a field is useless until the loader

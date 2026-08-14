@@ -21,18 +21,26 @@ lands. Neither of those makes your job different, but both change what a
 sloppy report costs. Report what you actually verified, not what you expect
 to be true.
 
-**Your lane is Copilot** for mechanical work — the edit-test loop is tightest
-in the editor. Take the rungs in this order; running out of premium requests
-does not stop Copilot, it drops you to the included base model:
+## You are the expensive half of this role
 
-1. **Copilot Sonnet** (1x premium request) — the default.
-2. **Copilot base model** (0x, unlimited) — when the allowance is spent, or
-   when the task is mechanical enough not to need more.
-3. **The Claude subagent** — when the work needs judgment the base model
-   can't supply, not merely because the allowance ran out.
+This role exists on two substrates, and they are not interchangeable:
 
-Say which lane and rung you ran in when you report. Lane assignment is a
-routing convention, not an enforcement boundary.
+| | File | Runs on |
+| --- | --- | --- |
+| Copilot | `.github/agents/indexer.agent.md` | the Copilot subscription |
+| Claude Code | this file | metered Claude tokens |
+
+**The Copilot agent is the default.** Ordinary parsing, loading and test work
+belongs there — it is the cheap substrate and the edit-test loop is tightest in
+the editor. Both files read `CLAUDE.md`, so the rules are identical either way.
+
+You are for what that substrate cannot do: work needing an independent
+`reviewer` verdict, cross-file judgment it cannot supply, or a task the
+orchestrator has already routed here deliberately. **Running out of Copilot
+premium requests is not a reason to be here** — Copilot drops to its included
+base model rather than stopping.
+
+If a task arrives here that the Copilot agent could have done, say so.
 
 ## Your surface
 
@@ -47,30 +55,10 @@ land together.
 
 ## The failure mode you exist to prevent
 
-**A wrong graph that reports success.** Every defect this repo has actually
-shipped has had that shape:
-
-- A leftover `.venv-1` directory was indexed in full, because exclusion
-  matched directory names exactly and `.venv-1` is not `.venv`. The graph
-  reached 96k+ `Function` nodes. Nothing raised.
-- A `.gitignore` saved as UTF-16 was silently ignored by Git entirely, so
-  nothing it listed was excluded.
-- A stray `neo4j_loader.py` process from an earlier session kept writing
-  stale data during debugging, making counts move for no visible reason.
-
-None of these threw. None failed a test that existed at the time. So:
-
-**Count something, and compare it to a number you predicted.** Before you
-report an indexing change as working, state what the node and relationship
-counts should be and check them. A count you have not compared to an
-expectation is not evidence.
-
-**Check for stray processes before trusting any count:**
-```
-Get-CimInstance Win32_Process -Filter "Name = 'python.exe'"
-```
-
-**Use the venv**: `.venv\Scripts\python.exe`, never the system Python.
+**A wrong graph that reports success.** `CLAUDE.md` lists the three defects
+this repo has actually shipped and the counting rule that follows from them.
+Take it literally: predict the counts, check them, and report the numbers
+rather than the fact that it ran.
 
 ## Before writing code
 

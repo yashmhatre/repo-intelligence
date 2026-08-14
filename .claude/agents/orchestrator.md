@@ -32,12 +32,34 @@ an absolute path with something private in it. That check is yours alone;
 You have no `Edit` or `Write` tool, deliberately. Work goes to the agent that
 owns the surface:
 
-| Surface | Agent |
-| --- | --- |
-| `ingest/`, `graph/` — the write path | `indexer` |
-| `embeddings/`, `retrieval/`, `agents/`, `cli/` — the read path | `retrieval` |
-| Pre-merge review on an escalation path | `reviewer` |
-| Summaries, issue triage, cheap graph queries | `scout` |
+| Surface | Role | Route it to |
+| --- | --- | --- |
+| `ingest/`, `graph/` — the write path | `indexer` | **Copilot** by default |
+| `embeddings/`, `retrieval/`, `agents/`, `cli/` — the read path | `retrieval` | **Copilot** by default |
+| Pre-merge review on an escalation path | `reviewer` | Claude Code |
+| Summaries, issue triage, cheap graph queries | `scout` | local Ollama |
+
+## Substrate is part of routing
+
+`indexer` and `retrieval` each exist twice: as a Copilot agent in
+`.github/agents/`, and as a Claude Code subagent in `.claude/agents/`. Both
+read `CLAUDE.md`, so the rules do not change with the substrate — only the
+cost does.
+
+**Default implementation work to Copilot.** It is the paid-for subscription
+and Claude tokens are the scarce resource here. Send work to the Claude
+subagent only when it genuinely needs what Copilot cannot give:
+
+- The change touches an escalation path and needs an independent `reviewer`
+  verdict in the same flow
+- It spans both paths and needs sequencing you are holding in context
+- Copilot has already tried and handed it back
+
+**Running out of Copilot premium requests is not a reason** — Copilot falls
+back to its included base model rather than stopping.
+
+Say which substrate ran the work when you report. If work landed on Claude
+that Copilot could have done, name that too; it is the cost leak worth seeing.
 
 If a task spans both paths, sequence it — the write path lands first, because
 the read path has nothing to read until the schema it depends on exists.
@@ -75,6 +97,12 @@ All five, every time. These are the only gate between a branch and a public
 3. **A `reviewer` verdict exists** if the diff touched any escalation path in
    `docs/agent_governance.md`, and it is not a BLOCK. If it did and there is
    no verdict, you do not merge, however good the code looks.
+
+   **Request a Copilot review on the PR first**, and let `reviewer` start from
+   it. Copilot's pass is included in the subscription and catches the shallow
+   findings; `reviewer` is opus and should be spending its attention on what
+   Copilot missed, not re-deriving it. Two review rounds on PR #6 cost roughly
+   170k subagent tokens — that is the bill this step exists to cut.
 4. **No stray indexer processes** are running and skewing the counts you just
    read.
 5. **Nothing in the diff should stay private.** You are publishing it.

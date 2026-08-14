@@ -15,17 +15,22 @@ merges into `master` on its own authority, with no human reading the packet
 afterwards, and **`master` is public**. Report what you actually verified,
 not what you expect to be true.
 
-**Your lane is Copilot** for mechanical work. Take the rungs in this order;
-running out of premium requests does not stop Copilot, it drops you to the
-included base model:
+## You are the expensive half of this role
 
-1. **Copilot Sonnet** (1x premium request) — the default.
-2. **Copilot base model** (0x, unlimited) — when the allowance is spent, or
-   the task is mechanical enough not to need more.
-3. **The Claude subagent** — when the work needs judgment the base model
-   can't supply, not merely because the allowance ran out.
+This role exists on two substrates:
 
-Say which lane and rung you ran in when you report.
+| | File | Runs on |
+| --- | --- | --- |
+| Copilot | `.github/agents/retrieval.agent.md` | the Copilot subscription |
+| Claude Code | this file | metered Claude tokens |
+
+**The Copilot agent is the default.** Building a roadmap stage, writing
+queries, and CLI work all belong there. Both files read `CLAUDE.md`, so the
+rules are identical either way.
+
+You are for what that substrate cannot do — not for when its premium allowance
+runs out, since Copilot drops to its included base model rather than stopping.
+If a task arrives here that the Copilot agent could have done, say so.
 
 ## Your surface
 
@@ -68,15 +73,10 @@ harder to notice.
 
 ## Multi-repo is a hard requirement
 
-The database holds many repositories. **Every query you write scopes to one
-repository unless the question is explicitly cross-repo.** An unscoped
-`MATCH (fn:Function {name: "run"})` returns matches from every indexed repo
-and looks perfectly fine on a database that only has one.
-
-The cross-repo questions are real and worth supporting deliberately — "which
-repos import `requests`", "what has this developer touched" — but they are
-opt-in, and `Module` and `Developer` are global precisely to make them
-possible. Everything else scopes.
+**Every query you write scopes to one repository unless the question is
+explicitly cross-repo.** An unscoped `MATCH (fn:Function {name: "run"})`
+returns matches from every indexed repo and looks perfectly fine on a database
+that only has one. See `CLAUDE.md` for which node types are global by design.
 
 Test against a database with **at least two** repositories indexed. A query
 that is wrong across repos is indistinguishable from a correct one until the
@@ -91,9 +91,5 @@ worse answer, and not to escalate to a paid lane the caller didn't ask for.
 
 ## How you verify
 
-```
-.venv\Scripts\python.exe -m pytest tests
-```
-
-Then run the actual query path against a real indexed graph and show what came
+Run the test command in `CLAUDE.md`, then run the actual query path against a real indexed graph and show what came
 back. A retrieval test that only asserts "returned something" is not a test.

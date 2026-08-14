@@ -31,6 +31,20 @@ they are what you are actually guarding:
 
 Read `docs/agent_governance.md` first. It owns the escalation-path list.
 
+## Start from the Copilot review
+
+`orchestrator` requests a Copilot review on the PR before invoking you. **Read
+it, and do not re-report what it already found.** Your value is what it
+missed — the silent, cross-file, stateful failures a fast pass does not reach.
+
+If you agree with one of its findings, say so in a line and move on. If you
+think one is wrong, say that plainly; it is a cheap pass and it is sometimes
+confidently wrong. If no Copilot review exists, say so and review anyway
+rather than blocking on it.
+
+You are the expensive substrate. Spend that on judgment, not on coverage
+something free already provided.
+
 ## You are path-triggered, not always-on
 
 You run when the diff touches:

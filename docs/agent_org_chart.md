@@ -97,6 +97,37 @@ the split is here rather than, say, between `ingest/` and `graph/`. Those two
 are one transaction — a parser field is useless until the loader persists it
 — so they stay with one agent.
 
+## Two substrates, one set of rules
+
+`indexer` and `retrieval` each exist twice, and this is the whole reason the
+roster is affordable:
+
+| Role | Copilot | Claude Code |
+| --- | --- | --- |
+| `indexer` | `.github/agents/indexer.agent.md` | `.claude/agents/indexer.md` |
+| `retrieval` | `.github/agents/retrieval.agent.md` | `.claude/agents/retrieval.md` |
+
+Both halves read `CLAUDE.md`, which VS Code Copilot and Claude Code both load
+automatically. The rules do not change with the substrate — only the cost does.
+`.github/instructions/*.instructions.md` carries the same rules to plain
+Copilot chat via `applyTo` globs, so editing a file under `graph/` picks them
+up without selecting an agent at all.
+
+**Copilot is the default for implementation work.** The Claude subagents are
+for what it cannot do: a change needing an independent `reviewer` verdict, or
+one spanning both paths. Exhausting Copilot's premium allowance is not a
+reason to escalate — it falls back to an included model rather than stopping.
+
+The other three roles have no Copilot half, for reasons that are structural
+rather than budgetary. `orchestrator` routes to other agents, and a Copilot
+agent cannot spawn agents. `reviewer` must be a different process from the
+author, and it is now the last check before a public merge. `scout` already
+runs free on local Ollama, so moving it would spend premium requests on
+exactly the reading it exists to make free.
+
+`orchestrator` also asks Copilot for a PR review before invoking `reviewer`,
+so the expensive pass starts from what the free one missed.
+
 ## scout — a utility, not a report
 
 `scout` sits outside the hierarchy on purpose. It reports to no one and no
