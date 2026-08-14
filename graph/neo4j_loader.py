@@ -45,29 +45,110 @@ driver = GraphDatabase.driver(
 # Developer are deliberately NOT scoped - a shared dependency and a person are
 # the same entity across repos, and keeping them global is what makes
 # "which repos import requests" and "what has this person touched" answerable.
-# Named explicitly rather than by list position. CREATE ... IF NOT EXISTS
-# no-ops on the *name*, so a positional name would silently leave an old
-# definition in place under a new intent when an entry is inserted.
+# Declared as (label, properties) rather than as Cypher strings, so the
+# schema can be reconciled against what is actually in the database. Names
+# are derived from the content, which means inserting or removing an entry
+# never rebinds an existing name to a different definition.
+#
+# Module and Developer are deliberately NOT repo-scoped - a shared dependency
+# and a person are the same entity across repos, and keeping them global is
+# what makes "which repos import requests" and "what has this person touched"
+# answerable.
 CONSTRAINTS = [
-    ("repo_unique_path", "FOR (r:Repository) REQUIRE r.path IS UNIQUE"),
-    ("file_unique_path", "FOR (f:File) REQUIRE f.path IS UNIQUE"),
-    ("module_unique_name", "FOR (m:Module) REQUIRE m.name IS UNIQUE"),
-    ("commit_unique_hash", "FOR (c:Commit) REQUIRE c.hash IS UNIQUE"),
-    ("developer_unique_email", "FOR (d:Developer) REQUIRE d.email IS UNIQUE"),
+    ("Repository", ["path"]),
+    ("File", ["path"]),
+    ("Module", ["name"]),
+    ("Commit", ["hash"]),
+    ("Developer", ["email"]),
 ]
 
 # Composite MERGE keys. Uniqueness across multiple properties is a node key
-# constraint, which is Enterprise-only, so these are plain indexes - they
-# make each MERGE a lookup instead of a full label scan.
+# constraint, which is Enterprise-only, so these are plain indexes - they make
+# each MERGE a lookup instead of a full label scan.
 INDEXES = [
-    ("function_key", "FOR (fn:Function) ON (fn.name, fn.file, fn.line)"),
-    ("function_repo_name", "FOR (fn:Function) ON (fn.repo, fn.name)"),
-    ("function_qualname", "FOR (fn:Function) ON (fn.file, fn.qualname)"),
-    ("class_name_file", "FOR (c:Class) ON (c.name, c.file)"),
-    ("issue_repo_number", "FOR (i:Issue) ON (i.repo, i.number)"),
-    ("file_repo", "FOR (f:File) ON (f.repo)"),
-    ("commit_repo", "FOR (c:Commit) ON (c.repo)"),
+    ("Function", ["name", "file", "line"]),
+    ("Function", ["repo", "name"]),
+    ("Function", ["file", "qualname"]),
+    ("Class", ["name", "file"]),
+    ("Issue", ["repo", "number"]),
+    ("File", ["repo"]),
+    ("Commit", ["repo"]),
 ]
+
+# Every schema object this loader owns carries this prefix. Anything else in
+# the database - including Neo4j's own LOOKUP indexes - is left alone.
+SCHEMA_PREFIX = "repo_intel_"
+
+
+def schema_object_name(kind: str, label: str, properties):
+    return f"{SCHEMA_PREFIX}{kind}_{label.lower()}_{'_'.join(properties)}"
+
+
+def ensure_schema():
+    """Create this loader's schema and remove its own superseded objects.
+
+    Reconciliation is the point. CREATE ... IF NOT EXISTS matches on the
+    *definition*, not the name, so renaming an object silently leaves the old
+    one in place, and dropping one from this file leaves it in the database
+    forever. A stale `Issue.number IS UNIQUE` from an earlier version is
+    exactly how multi-repo indexing breaks: the second repository's issue #1
+    collides with the first's.
+    """
+    expected_constraints = {(label, tuple(props)) for label, props in CONSTRAINTS}
+    expected_indexes = {(label, tuple(props)) for label, props in INDEXES}
+
+    with driver.session(database=DATABASE) as session:
+
+        for label, props in CONSTRAINTS:
+            name = schema_object_name("c", label, props)
+            prop = props[0]
+            session.run(
+                f"CREATE CONSTRAINT {name} IF NOT EXISTS "
+                f"FOR (n:{label}) REQUIRE n.{prop} IS UNIQUE"
+            )
+
+        for label, props in INDEXES:
+            name = schema_object_name("i", label, props)
+            on = ", ".join(f"n.{prop}" for prop in props)
+            session.run(
+                f"CREATE INDEX {name} IF NOT EXISTS "
+                f"FOR (n:{label}) ON ({on})"
+            )
+
+        # Drop constraints first: dropping one takes its backing index with
+        # it, and an index that backs a constraint cannot be dropped directly.
+        obsolete = [
+            record["name"]
+            for record in session.run(
+                "SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties "
+                "RETURN name, labelsOrTypes, properties"
+            )
+            if record["name"].startswith(SCHEMA_PREFIX)
+            and (record["labelsOrTypes"][0], tuple(record["properties"]))
+            not in expected_constraints
+        ]
+
+        for name in obsolete:
+            session.run(f"DROP CONSTRAINT {name} IF EXISTS")
+            print(f"Dropped superseded constraint: {name}")
+
+        obsolete = [
+            record["name"]
+            for record in session.run(
+                "SHOW INDEXES YIELD name, labelsOrTypes, properties, owningConstraint "
+                "RETURN name, labelsOrTypes, properties, owningConstraint"
+            )
+            if record["name"].startswith(SCHEMA_PREFIX)
+            and record["owningConstraint"] is None
+            and (record["labelsOrTypes"][0], tuple(record["properties"]))
+            not in expected_indexes
+        ]
+
+        for name in obsolete:
+            session.run(f"DROP INDEX {name} IF EXISTS")
+            print(f"Dropped superseded index: {name}")
+
+    print("Schema ready")
 
 
 def test_connection():
@@ -76,23 +157,6 @@ def test_connection():
             "RETURN 'Connected to Repo Intelligence' AS message"
         )
         print(result.single()["message"])
-
-
-def ensure_schema():
-    """Idempotent - safe to run on every index."""
-    with driver.session(database=DATABASE) as session:
-
-        for name, body in CONSTRAINTS:
-            session.run(
-                f"CREATE CONSTRAINT repo_intel_{name} IF NOT EXISTS {body}"
-            )
-
-        for name, body in INDEXES:
-            session.run(
-                f"CREATE INDEX repo_intel_{name} IF NOT EXISTS {body}"
-            )
-
-    print("Schema ready")
 
 
 def register_repository(repo_key: str, name: str, remote=None):
