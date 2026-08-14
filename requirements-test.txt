@@ -1,6 +1,18 @@
 # Only what the test suite actually imports. The full requirements.txt
 # pulls sentence-transformers (and torch with it), which no test needs.
+#
+# chromadb IS included here, even though it's not in the line above's
+# "the tests actually import" sense of trivial — tests/test_embeddings.py
+# imports chromadb directly (EmbeddingFunction, Documents, Embeddings) and
+# embeddings/embed.py imports it at module scope, so it must be importable
+# for collection to succeed. It does not pull in torch transitively, so it
+# does not reintroduce the cost this file exists to avoid.
+#
+# sentence-transformers stays OUT on purpose: every test uses a stub
+# embedding function (_StubEF) instead of the real model, so the tests never
+# need it. Do not add it back without a test that actually requires it.
 pytest
 gitpython
 typer
 neo4j
+chromadb
