@@ -321,6 +321,41 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                 repo=repo_key,
             )
 
+        # Module-level (a.k.a. notebook top-level) table access has no real
+        # Function to attach to, so it attaches to the File itself rather
+        # than minting a synthetic "<module>" Function - see the comment in
+        # ingest/parse_code.py. This is the only place READS/WRITES
+        # originate from :File instead of :Function.
+        module_calls = parsed.get("module_calls") or []
+        module_tables = parsed.get("module_tables") or []
+
+        if module_calls or module_tables:
+            session.run(
+                """
+                MERGE (f:File {path: $file_path})
+                SET f.module_calls = $module_calls
+
+                WITH f
+                UNWIND $tables AS tbl
+                MERGE (t:Table {qualified_name: tbl.qualified_name})
+                SET t.name = tbl.name,
+                    t.qualified = tbl.qualified
+                FOREACH (_ IN CASE WHEN tbl.qualified THEN [] ELSE [1] END |
+                    SET t.repo = $repo
+                )
+                FOREACH (_ IN CASE WHEN tbl.access = "READS" THEN [1] ELSE [] END |
+                    MERGE (f)-[:READS]->(t)
+                )
+                FOREACH (_ IN CASE WHEN tbl.access = "WRITES" THEN [1] ELSE [] END |
+                    MERGE (f)-[:WRITES]->(t)
+                )
+                """,
+                file_path=file_path,
+                repo=repo_key,
+                module_calls=module_calls,
+                tables=table_params(module_tables, repo_key),
+            )
+
         # Create top-level functions and CONTAINS relationships
         for fn in parsed["functions"]:
             session.run(
@@ -512,22 +547,20 @@ def link_calls(repo_key: str):
 
 def link_notebook_calls(repo_key: str):
     """(:Notebook)-[:CALLS]->(:Function): what a notebook's top-level code
-    actually invokes, sourced from the synthetic "<module>" Function's
-    `calls` list - the same list, and the same naive name-based matching,
-    that link_calls() uses for ordinary CALLS edges. Scoped to one
-    repository for the identical reason: matching by bare name across the
-    whole database would link a notebook in one repo to a same-named
-    function in an unrelated one.
+    actually invokes, sourced from the owning File's `module_calls`
+    property - the same naive name-based matching that link_calls() uses
+    for ordinary CALLS edges, but with no synthetic Function in between.
+    Scoped to one repository for the identical reason: matching by bare
+    name across the whole database would link a notebook in one repo to a
+    same-named function in an unrelated one.
     """
     with driver.session(database=DATABASE) as session:
         session.run(
             """
             MATCH (nb:Notebook {repo: $repo})<-[:IS_NOTEBOOK]-(f:File)
-            MATCH (f)-[:CONTAINS]->(mod:Function {name: "<module>", repo: $repo})
-            WHERE mod.calls IS NOT NULL
-            UNWIND mod.calls AS call_name
+            WHERE f.module_calls IS NOT NULL
+            UNWIND f.module_calls AS call_name
             MATCH (callee:Function {repo: $repo, name: call_name})
-            WHERE callee <> mod
             MERGE (nb)-[:CALLS]->(callee)
             """,
             repo=repo_key,

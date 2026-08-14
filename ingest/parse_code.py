@@ -237,20 +237,13 @@ def parse_python_source(source: str, path):
 
     module_tables = list({(t["table"], t["access"]): t for t in module_tables}.values())
 
-    # Only synthesized when there is something to attach - an ordinary
-    # script's top-level `if __name__ == "__main__":` would otherwise mint a
-    # spurious Function node in every file, notebook or not.
-    if module_calls or module_tables:
-        functions.append({
-            "name": "<module>",
-            "qualname": "<module>",
-            "line": 0,
-            "start_line": 0,
-            "end_line": 0,
-            "calls": module_calls,
-            "tables": module_tables,
-        })
-
+    # Module-level calls/tables are NOT wrapped in a synthetic Function node.
+    # A pseudo "<module>" Function in every file that has top-level code
+    # would inflate the Function count across every repository this tool
+    # indexes and silently change what every "how many/which functions"
+    # query returns - exactly this repo's documented failure shape, a wrong
+    # count that reports success. The loader attaches this data to the
+    # :File node instead (or :Notebook, for the .ipynb case).
     is_notebook = source.lstrip().startswith(DATABRICKS_NOTEBOOK_MARKER)
 
     return {
@@ -259,6 +252,8 @@ def parse_python_source(source: str, path):
         "classes": classes,
         "imports": imports,
         "is_notebook": is_notebook,
+        "module_calls": module_calls,
+        "module_tables": module_tables,
     }
 
 
