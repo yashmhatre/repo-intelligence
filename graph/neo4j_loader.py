@@ -41,10 +41,8 @@ driver = GraphDatabase.driver(
 
 # One Neo4j database holds many repositories. Every repo-owned node carries a
 # `repo` property set to the repository's absolute path, and that is what
-# scopes a wipe, a call-graph link, or an issue number to one repo. Module and
-# Developer are deliberately NOT scoped - a shared dependency and a person are
-# the same entity across repos, and keeping them global is what makes
-# "which repos import requests" and "what has this person touched" answerable.
+# scopes a wipe, a call-graph link, or an issue number to one repo.
+#
 # Declared as (label, properties) rather than as Cypher strings, so the
 # schema can be reconciled against what is actually in the database. Names
 # are derived from the content, which means inserting or removing an entry
@@ -58,7 +56,6 @@ CONSTRAINTS = [
     ("Repository", ["path"]),
     ("File", ["path"]),
     ("Module", ["name"]),
-    ("Commit", ["hash"]),
     ("Developer", ["email"]),
 ]
 
@@ -72,7 +69,7 @@ INDEXES = [
     ("Class", ["name", "file"]),
     ("Issue", ["repo", "number"]),
     ("File", ["repo"]),
-    ("Commit", ["repo"]),
+    ("Commit", ["repo", "hash"]),
 ]
 
 # Every schema object this loader owns carries this prefix. Anything else in
@@ -84,7 +81,7 @@ def schema_object_name(kind: str, label: str, properties):
     return f"{SCHEMA_PREFIX}{kind}_{label.lower()}_{'_'.join(properties)}"
 
 
-def ensure_schema():
+def ensure_schema(reconcile: bool = False):
     """Create this loader's schema and remove its own superseded objects.
 
     Reconciliation is the point. CREATE ... IF NOT EXISTS matches on the
@@ -100,6 +97,13 @@ def ensure_schema():
     with driver.session(database=DATABASE) as session:
 
         for label, props in CONSTRAINTS:
+            if len(props) != 1:
+                raise ValueError(
+                    f"CONSTRAINTS entry {label}{props} has multiple properties. "
+                    "Composite uniqueness is a node key constraint, which is "
+                    "Enterprise-only - declare it in INDEXES instead."
+                )
+
             name = schema_object_name("c", label, props)
             prop = props[0]
             session.run(
@@ -129,6 +133,10 @@ def ensure_schema():
         ]
 
         for name in obsolete:
+            if not reconcile:
+                print(f"Superseded constraint left in place: {name} (--clean drops it)")
+                continue
+
             session.run(f"DROP CONSTRAINT {name} IF EXISTS")
             print(f"Dropped superseded constraint: {name}")
 
@@ -145,6 +153,10 @@ def ensure_schema():
         ]
 
         for name in obsolete:
+            if not reconcile:
+                print(f"Superseded index left in place: {name} (--clean drops it)")
+                continue
+
             session.run(f"DROP INDEX {name} IF EXISTS")
             print(f"Dropped superseded index: {name}")
 
@@ -329,6 +341,37 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                     module_name=imp
                 )
 
+        # Drop definitions that no longer exist at these positions. Function
+        # is keyed on (name, file, line), so an edit that shifts a def leaves
+        # the old node behind - and CHANGES, which matches on qualname, then
+        # attaches the commit to the stale node as well as the current one.
+        function_lines = [fn["line"] for fn in parsed["functions"]]
+        function_lines += [
+            method["line"]
+            for cls in parsed["classes"]
+            for method in cls["methods"]
+        ]
+
+        session.run(
+            """
+            MATCH (fn:Function {file: $file_path})
+            WHERE NOT fn.line IN $lines
+            DETACH DELETE fn
+            """,
+            file_path=file_path,
+            lines=function_lines,
+        )
+
+        session.run(
+            """
+            MATCH (c:Class {file: $file_path})
+            WHERE NOT c.name IN $names
+            DETACH DELETE c
+            """,
+            file_path=file_path,
+            names=[cls["name"] for cls in parsed["classes"]],
+        )
+
     print(f"Indexed: {file_path}")
 
 
@@ -380,12 +423,11 @@ def index_git_history(repo_path: str, repo_key: str):
             # 1. Create/update Commit, owned by its repository
             session.run(
                 """
-                MERGE (c:Commit {hash: $hash})
+                MERGE (c:Commit {repo: $repo, hash: $hash})
                 SET c.message = $message,
                     c.author_name = $author_name,
                     c.author_email = $author_email,
-                    c.authored_at = $authored_at,
-                    c.repo = $repo
+                    c.authored_at = $authored_at
 
                 WITH c
                 MATCH (r:Repository {path: $repo})
@@ -408,12 +450,13 @@ def index_git_history(repo_path: str, repo_key: str):
                 SET d.name = $name
 
                 WITH d
-                MATCH (c:Commit {hash: $hash})
+                MATCH (c:Commit {repo: $repo, hash: $hash})
                 MERGE (c)-[:AUTHORED_BY]->(d)
                 """,
                 email=commit["author_email"],
                 name=commit["author_name"],
                 hash=commit["hash"],
+                repo=repo_key,
             )
 
             # 3. Issues referenced in the commit message.
@@ -425,7 +468,7 @@ def index_git_history(repo_path: str, repo_key: str):
                     MERGE (i:Issue {repo: $repo, number: $number})
 
                     WITH i
-                    MATCH (c:Commit {hash: $hash})
+                    MATCH (c:Commit {repo: $repo, hash: $hash})
                     MERGE (c)-[:REFERENCES]->(i)
                     """,
                     number=issue_number,
@@ -445,12 +488,13 @@ def index_git_history(repo_path: str, repo_key: str):
 
                 session.run(
                     """
-                    MATCH (c:Commit {hash: $hash})
+                    MATCH (c:Commit {repo: $repo, hash: $hash})
                     MATCH (f:File {path: $file_path})
                     MERGE (c)-[:MODIFIES]->(f)
                     """,
                     hash=commit["hash"],
                     file_path=file_path,
+                    repo=repo_key,
                 )
 
                 if not git_path.endswith(".py"):
@@ -461,25 +505,28 @@ def index_git_history(repo_path: str, repo_key: str):
                     continue
 
                 ranges = commit["changed_ranges"][git_path]
+                deleted = commit["deleted_ranges"].get(git_path)
 
                 for qualname in changed_function_names(
-                    repo_path, commit["hash"], git_path, ranges
+                    repo_path, commit["hash"], git_path, ranges, deleted
                 ):
                     # Matched on the qualified name: two classes in one file
                     # can each define run(), and a bare name would attribute
                     # an edit in one of them to both.
                     session.run(
                         """
-                        MATCH (c:Commit {hash: $hash})
+                        MATCH (c:Commit {repo: $repo, hash: $hash})
                         MATCH (fn:Function {
                             qualname: $qualname,
-                            file: $file_path
+                            file: $file_path,
+                            repo: $repo
                         })
                         MERGE (c)-[:CHANGES]->(fn)
                         """,
                         hash=commit["hash"],
                         qualname=qualname,
                         file_path=file_path,
+                        repo=repo_key,
                     )
 
             print(f"Indexed commit: {commit['hash'][:10]}")
@@ -514,7 +561,9 @@ def index_repository(repo_path: str, clean=False, skip_history=False):
     # local-first tool that indexes a working copy.
     repo_key = str(repo)
 
-    ensure_schema()
+    # Dropping schema objects is destructive and this database is shared
+    # between repositories, so it only happens on an explicit --clean.
+    ensure_schema(reconcile=clean)
 
     # Fetched regardless of skip_history: register_repository would otherwise
     # be handed None and, before the FOREACH guard, wipe a remote recorded by
@@ -543,7 +592,10 @@ def index_repository(repo_path: str, clean=False, skip_history=False):
             parsed = parse_python_file(py)
             index_parsed_file(parsed, repo_modules, repo_key)
 
-        except Exception as e:
+        except (SyntaxError, UnicodeDecodeError, OSError) as e:
+            # Only unreadable or unparseable source is skipped. Driver errors
+            # propagate: exiting 0 on a half-written graph is how a wrong
+            # result gets reported as a successful one.
             print(f"Failed: {py}")
             print(f"Reason: {e}")
 

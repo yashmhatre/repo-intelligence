@@ -43,7 +43,8 @@ repo-intelligence/
 ## Local Setup
 
 1. Python virtual environment (`.venv`) on Windows.
-2. `pip install -r requirements.txt`
+2. `pip install -r requirements.txt` — or `requirements-test.txt` for just the test suite,
+   which avoids pulling `sentence-transformers` and torch with it.
 3. Neo4j running locally (Desktop or Docker) — see below.
 4. (Later) Ollama running locally with `qwen2.5-coder:7b` pulled.
 
@@ -95,7 +96,7 @@ Nodes:
 (:Function   {name, qualname, file, line, end_line, calls, repo})
 (:Class      {name, file, line, repo})
 (:Module     {name})                      # global, shared across repositories
-(:Commit     {hash, message, author_name, author_email, authored_at, repo})
+(:Commit     {repo, hash, message, author_name, author_email, authored_at})
 (:Developer  {email, name})               # global, shared across repositories
 (:Issue      {repo, number})
 ```
@@ -131,7 +132,7 @@ Each of those choices fixes a specific misattribution:
 | Parse at the commit, not today | Every commit made before the code moved is attributed to whatever now occupies those line numbers |
 | Qualified names (`Class.method`) | Two classes in one file that both define `run()` collapse into one target, and editing either blames both |
 | Ranges start at the first decorator | A decorator-only change falls outside the `def` range and is attributed to nothing |
-| Deletion hunks kept as a zero-width range | `+c,0` has no new-side lines, so every cleanup commit attributes to nothing and "who last changed this" skips deletions |
+| Deletions resolved against the **parent** revision | A removed block has no position in the new file. Mapping it to the nearest new-side line blames whichever function precedes the gap — deleting a function would blame the one above it |
 | Merge commits claim nothing | Diffing a merge against its first parent reports the whole merged branch as its work, double-counting every change and returning whoever pressed merge as the author |
 
 Functions deleted since a commit have no node to link to and are skipped, rather than being resurrected

@@ -66,12 +66,13 @@ def commit_change(tmp_path, git_repo, content, message):
     return git_repo.index.commit(message)
 
 
-def names_for(tmp_path, history_entry):
+def names_for(tmp_path, history_entry, path="mod.py"):
     return changed_function_names(
         str(tmp_path),
         history_entry["hash"],
-        "mod.py",
-        history_entry["changed_ranges"]["mod.py"],
+        path,
+        history_entry["changed_ranges"][path],
+        history_entry["deleted_ranges"].get(path),
     )
 
 
@@ -250,3 +251,26 @@ def test_a_merge_commit_claims_nothing(repo):
     assert merge_commit["is_merge"] is True
     assert merge_commit["changed_files"] == []
     assert merge_commit["changed_ranges"] == {}
+
+
+ONLY_ALPHA = '''def alpha():
+    return 1
+'''
+
+
+def test_deleting_a_whole_function_does_not_blame_the_one_above_it(repo):
+    """A pure deletion has no new-side lines.
+
+    Mapping it onto the nearest new-side line lands on whichever function
+    precedes the gap, so removing beta would create a CHANGES edge to alpha -
+    a function the commit never touched. Resolving against the parent
+    revision attributes it to beta, which no longer exists and so correctly
+    produces no edge at all.
+    """
+    tmp_path, git_repo = repo
+    commit_change(tmp_path, git_repo, ONLY_ALPHA, "delete beta entirely")
+
+    history = get_git_history(str(tmp_path))
+
+    assert names_for(tmp_path, history[0]) == ["beta"]
+    assert "alpha" not in names_for(tmp_path, history[0])

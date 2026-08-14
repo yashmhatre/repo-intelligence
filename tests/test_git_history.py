@@ -1,6 +1,10 @@
 import pytest
 
-from ingest.git_history import extract_issue_numbers, parse_hunk_ranges
+from ingest.git_history import (
+    extract_issue_numbers,
+    parse_deleted_ranges,
+    parse_hunk_ranges,
+)
 
 
 @pytest.mark.parametrize("message, expected", [
@@ -32,22 +36,28 @@ def test_hunk_ranges_with_omitted_count_means_one_line():
     assert parse_hunk_ranges(patch) == [(7, 7)]
 
 
-def test_pure_deletion_hunk_is_a_zero_width_range():
-    """A deletion still changed the function it was removed from.
+def test_a_pure_deletion_has_no_new_side_range():
+    patch = "@@ -5,3 +4,0 @@" + chr(10) + "-gone" + chr(10)
 
-    Dropping these would make "who last changed this function" silently
-    skip every cleanup commit.
+    assert parse_hunk_ranges(patch) == []
+
+
+def test_a_pure_deletion_is_reported_on_the_old_side():
+    """Resolved against the parent revision, where the lines still exist.
+
+    Mapping a deletion onto the nearest new-side line attributes it to
+    whichever function precedes the gap.
     """
     patch = "@@ -5,3 +4,0 @@" + chr(10) + "-gone" + chr(10)
 
-    assert parse_hunk_ranges(patch) == [(4, 4)]
+    assert parse_deleted_ranges(patch) == [(5, 7)]
 
 
-def test_deletion_at_start_of_file_clamps_to_line_one():
-    # Git reports +0,0 when the very first lines of a file are removed.
-    patch = "@@ -1,2 +0,0 @@" + chr(10) + "-gone" + chr(10)
+def test_an_edit_is_not_reported_as_a_deletion():
+    patch = "@@ -1,4 +10,3 @@" + chr(10)
 
-    assert parse_hunk_ranges(patch) == [(1, 1)]
+    assert parse_deleted_ranges(patch) == []
+
 
 
 def test_multiple_hunks():

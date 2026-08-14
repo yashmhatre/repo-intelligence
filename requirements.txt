@@ -6,4 +6,3 @@ tree-sitter-python
 typer 
 rich 
 gitpython
-pytest
