@@ -75,11 +75,26 @@ proves nothing about isolation; the bug always shows up on the second.
 | `tests/` | whichever role owns the code under test |
 | Routing, PRs, merges | `orchestrator` (Claude Code only) |
 | Pre-merge review on an escalation path | `reviewer` (Claude Code only) |
-| Summaries, issue triage, cheap graph queries | `scout` (local Ollama) |
+| Summaries, issue triage, cheap graph queries | `scout` (Haiku; reading routed to local Ollama via the `context-scout` MCP) |
 
 `indexer` owns both `ingest/` and `graph/` on purpose: a parser change that
 adds a field is useless until the loader persists it, so splitting them would
 put a handoff in the middle of one edit.
+
+## Spend the cheap substrates first
+
+Claude tokens are the scarce resource here; the Copilot subscription and the
+local Ollama model are already paid for.
+
+- **Before reading raw material** — an issue body, a long git history, a CI log
+  — call the `context-scout` MCP tools. They run on a local model and cost
+  nothing. Reading the raw output into Claude context is the expensive path.
+- **Implementation defaults to Copilot.** See `docs/agent_org_chart.md`.
+- **Do not spawn a subagent to make a single tool call.** The spawn costs more
+  than the call.
+
+None of this applies to review on an escalation path. That is the last check
+before a public merge, and it does not economise.
 
 ## Before merging anything
 

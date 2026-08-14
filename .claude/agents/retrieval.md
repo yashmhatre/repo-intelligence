@@ -3,6 +3,7 @@ name: retrieval
 description: Implements and fixes the read path - embeddings/ (Chroma pipeline), retrieval/ (graph + vector search), agents/ (context assembly), and cli/ (Typer entrypoints). Use for anything that queries the graph or assembles context out of it. Not for ingest/ or graph/ loading (use indexer).
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
+effort: medium
 maxTurns: 30
 isolation: worktree
 ---

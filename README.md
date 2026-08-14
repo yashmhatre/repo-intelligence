@@ -238,7 +238,7 @@ This repo is worked on by a small Claude Code agent team defined in
 | `indexer` | The write path — `ingest/`, `graph/` | **Copilot** by default |
 | `retrieval` | The read path — `embeddings/`, `retrieval/`, `agents/`, `cli/` | **Copilot** by default |
 | `reviewer` | Adversarial read on escalation paths. Read-only, never merges | Claude Code |
-| `scout` | Free local-model summaries and read-only graph queries | local Ollama |
+| `scout` | Cheap briefs and read-only graph queries; reading routed to local Ollama | Haiku + MCP |
 
 `indexer` and `retrieval` exist on both substrates — as Copilot agents in
 `.github/agents/` and as Claude Code subagents in `.claude/agents/`. Both read

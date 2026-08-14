@@ -7,7 +7,7 @@ graph TD
     I["indexer (Claude/Copilot)<br/>ingest/ + graph/ — the write path"]
     R["retrieval (Claude/Copilot)<br/>embeddings/ retrieval/ agents/ cli/ — the read path"]
     V["reviewer (Claude)<br/>adversarial read on escalation paths"]
-    S["scout (local model)<br/>issue/git/graph summarization — utility, not in reporting line"]
+    S["scout (Haiku + local MCP)<br/>issue/git/graph summarization — utility, not in reporting line"]
 
     Yash --> O
     O --> I
@@ -143,12 +143,49 @@ exactly the reading it exists to make free.
 `orchestrator` also asks Copilot for a PR review before invoking `reviewer`,
 so the expensive pass starts from what the free one missed.
 
+## The token budget
+
+Claude tokens are the scarce resource; the Copilot subscription and the local
+Ollama model are already paid for. The roster is arranged so that the expensive
+substrate only sees work that needs it.
+
+| Work | Runs on | Cost |
+| --- | --- | --- |
+| Reading raw material — issue bodies, git history, CI logs | `context-scout` MCP → local Ollama | free |
+| Implementation — parsing, loading, queries, CLI, tests | Copilot | subscription |
+| First-pass PR review | Copilot code review | subscription |
+| Stitching several lookups into one brief | `scout` — Haiku, low effort | cheap |
+| Routing, PRs, merges | `orchestrator` — Opus, medium effort | metered |
+| Adversarial review on escalation paths | `reviewer` — Opus, **high** effort | metered |
+
+**`reviewer` is deliberately the one place that does not economise.** It is the
+last check before a public merge, and every bug this repo shipped was one that
+reported success. Saving tokens there buys nothing and risks the failure the
+whole roster exists to prevent.
+
+### Two corrections worth recording
+
+**A subagent cannot run on a local model.** Claude Code's `model` field accepts
+only `sonnet`, `opus`, `haiku`, `fable`, a full Anthropic model ID, or
+`inherit`, and an unrecognised value falls back to inheriting the main
+conversation's model. `scout` was originally declared as `ollama/qwen3.5:9b`,
+which meant the role designed to be the cheap tier was silently running on
+Opus — the most expensive model in the roster. It is now Haiku at low effort,
+with the actual reading routed to Ollama through the `context-scout` MCP
+server. That server is a supported extension point and never touches Claude
+Code's own request path.
+
+**Spawning a subagent to make one tool call costs more than the tool call.**
+`orchestrator` has `context-scout` directly for that reason. `scout` earns its
+turn only when several lookups need stitching together.
+
 ## scout — a utility, not a report
 
 `scout` sits outside the hierarchy on purpose. It reports to no one and no
 one reports to it: it is a shared, free pre-processing step that any agent,
 or Yash directly, calls before spending Claude tokens on raw material. It
-runs on a local Ollama model, is read-only, and cannot spawn other agents.
+runs on Haiku at low effort and routes the actual reading to a local Ollama
+model through the `context-scout` MCP server. Read-only; cannot spawn agents.
 
 On this repo it has one capability the Ingredion version does not: **read-only
 Cypher against the local graph.** Answering "which functions call this one"

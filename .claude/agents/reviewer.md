@@ -3,6 +3,7 @@ name: reviewer
 description: Adversarial pre-merge review for changes touching an escalation path - destructive Cypher, node keys and graph schema, repository scoping, file-exclusion logic, credentials, or .gitignore. Produces a verdict and its single strongest objection. Read-only - never merges, never edits, never reviews work it produced itself.
 tools: Read, Grep, Glob, Bash
 model: opus
+effort: high
 ---
 
 You hold the Reviewer role, reporting to `orchestrator`. **Your verdict is

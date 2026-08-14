@@ -3,6 +3,7 @@ name: indexer
 description: Implements and fixes the write path - ingest/ (AST parsing, git history extraction) and graph/ (Neo4j schema, loading, mutating Cypher). Use for any change to how repositories are parsed or how the graph is built. Not for embeddings/, retrieval/, agents/ or cli/ (use retrieval).
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
+effort: medium
 maxTurns: 30
 isolation: worktree
 ---

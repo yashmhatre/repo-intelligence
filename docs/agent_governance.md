@@ -96,7 +96,7 @@ existing on these paths and not on ordinary code.
 | `tests/` | whichever agent owns the code under test | follows that agent |
 | `README.md`, `docs/` | the agent making the change it documents | follows that agent |
 | Pre-merge review on an escalation path | `reviewer` | Claude Code only |
-| Summaries, issue triage, cheap graph queries | `scout` | local Ollama |
+| Summaries, issue triage, cheap graph queries | `scout` | Haiku + local MCP |
 
 `orchestrator` owns both roles across both substrates and is accountable for
 work it hands to Copilot, by either route. **Escalation-path work is never
