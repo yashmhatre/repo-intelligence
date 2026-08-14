@@ -45,4 +45,15 @@ Ordinary parsing, loading and test work is yours to finish here. That is the
 point of this lane: it is the cheap substrate, and most of the work belongs on
 it.
 
-Say which model you ran on when you report.
+## How work reaches you
+
+Either `orchestrator` assigned you an issue, or Yash pasted a brief naming the
+files in scope and what "done" looks like. Both carry their own acceptance
+criteria — meet those, not your own interpretation of the task.
+
+`orchestrator` takes the result back and decides what happens next. **Report
+numbers, not adjectives**: the tests that ran, the counts you got, and anything
+you could not verify. "It works" is not a report, and a report with no numbers
+in it will simply be sent back.
+
+Say which model you ran on.

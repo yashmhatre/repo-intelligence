@@ -27,8 +27,9 @@ itself Tier 2. That asymmetry, not the merge itself, is what Tier 2 protects.
 
 **Tier 1 — the agent team acts.** Writing code, tests and docs on a feature
 branch; running the indexer against a local Neo4j database; opening a PR;
-**merging it into `master`** once the merge conditions in
-`.claude/agents/orchestrator.md` are met. No approval needed. `reviewer`
+assigning an issue to the GitHub Copilot coding agent; **merging it into
+`master`** once the merge conditions in `.claude/agents/orchestrator.md` are
+met. No approval needed. `reviewer`
 gates the escalation paths listed below before the merge, not before Yash
 sees it — there is no longer a human reading the packet afterwards.
 
@@ -96,6 +97,11 @@ existing on these paths and not on ordinary code.
 | `README.md`, `docs/` | the agent making the change it documents | follows that agent |
 | Pre-merge review on an escalation path | `reviewer` | Claude Code only |
 | Summaries, issue triage, cheap graph queries | `scout` | local Ollama |
+
+`orchestrator` owns both roles across both substrates and is accountable for
+work it hands to Copilot, by either route. **Escalation-path work is never
+assigned to the Copilot coding agent** — an autonomous PR cannot carry the
+independent `reviewer` verdict those paths require.
 
 Substrate is a cost decision, not a rules decision: `CLAUDE.md` is loaded by
 both Copilot and Claude Code, so the same constraints apply either way. See

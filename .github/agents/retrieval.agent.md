@@ -56,4 +56,15 @@ Stop and say so when the work needs a schema change, or touches an escalation
 path in `docs/agent_governance.md`. Everything else — queries, retrieval code,
 CLI, tests — is yours to finish here.
 
-Say which model you ran on when you report.
+## How work reaches you
+
+Either `orchestrator` assigned you an issue, or Yash pasted a brief naming the
+files in scope and what "done" looks like. Both carry their own acceptance
+criteria — meet those, not your own interpretation of the task.
+
+`orchestrator` takes the result back and decides what happens next. **Report
+numbers, not adjectives**: the tests that ran, the counts you got, and anything
+you could not verify. "It works" is not a report, and a report with no numbers
+in it will simply be sent back.
+
+Say which model you ran on.

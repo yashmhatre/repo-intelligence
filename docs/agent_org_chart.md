@@ -118,6 +118,21 @@ for what it cannot do: a change needing an independent `reviewer` verdict, or
 one spanning both paths. Exhausting Copilot's premium allowance is not a
 reason to escalate — it falls back to an included model rather than stopping.
 
+**`orchestrator` owns both halves of both roles.** It cannot invoke Copilot
+Chat — no such call exists — so handing work to Copilot is something it does
+deliberately, by one of two routes:
+
+| Route | Shape of work | Human in the loop |
+| --- | --- | --- |
+| Assign the issue to the **Copilot coding agent** | issue-shaped, no live judgment needed | none — Copilot opens its own PR |
+| Emit a **paste-ready brief** for Copilot Chat | interactive, shape still moving | Yash pastes it and selects the agent |
+
+Neither route is fire-and-forget. `orchestrator` tracks what is in flight, must
+never hand the same surface to two substrates at once, and takes the result
+back on its own authority. Escalation-path work is never assigned to the
+coding agent, because an autonomous PR is the wrong shape for something that
+needs a `reviewer` verdict.
+
 The other three roles have no Copilot half, for reasons that are structural
 rather than budgetary. `orchestrator` routes to other agents, and a Copilot
 agent cannot spawn agents. `reviewer` must be a different process from the
