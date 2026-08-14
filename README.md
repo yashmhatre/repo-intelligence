@@ -148,6 +148,31 @@ sending full file contents or the whole repo to the LLM.
 5. Retrieval layer combining graph + vector search into compact context packages.
 6. Ollama-backed summarization/classification for retrieval and agent context.
 
+## Agent Team
+
+This repo is worked on by a small Claude Code agent team defined in
+`.claude/agents/`. Five roles, split by the surfaces this project actually has:
+
+| Agent | Owns |
+| --- | --- |
+| `orchestrator` | Routes work, opens PRs, assembles the merge packet. Delegates only |
+| `indexer` | The write path — `ingest/`, `graph/` |
+| `retrieval` | The read path — `embeddings/`, `retrieval/`, `agents/`, `cli/` |
+| `reviewer` | Adversarial read on escalation paths. Read-only, never merges |
+| `scout` | Free local-model summaries and read-only graph queries |
+
+- `docs/agent_org_chart.md` — the roster, and why it is five roles rather than seven
+- `docs/agent_governance.md` — the tiers, the escalation paths, and the evidence behind them
+
+The boundary is the pull request: everything up to an open PR belongs to the
+agent team, merging to `master` belongs to the repo owner. `reviewer` gates
+the paths where a wrong change **reports success and produces a wrong graph** —
+destructive Cypher, node keys, repository scoping, and file exclusion. That
+list is drawn from defects this repo actually shipped, not from a template.
+
+`scout` overlaps with the [`context-scout`](https://github.com/yashmhatre/ingredion-agent-config)
+MCP server; prefer the MCP tools when a single call answers the question.
+
 ## Troubleshooting
 
 - **Graph has far more nodes than expected**: check for stray virtual-environment folders (e.g. a leftover
