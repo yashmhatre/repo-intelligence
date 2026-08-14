@@ -2,8 +2,8 @@
 
 ```mermaid
 graph TD
-    Yash["Yash — owner<br/>(human; merges to master, Tier 2 only)"]
-    O["orchestrator (Claude)<br/>routes work, opens PRs,<br/>assembles the merge packet"]
+    Yash["Yash — owner<br/>(human; Tier 2 only — credentials,<br/>history rewrites, anything leaving the repo)"]
+    O["orchestrator (Claude)<br/>routes work, opens PRs,<br/>merges to master on its own authority"]
     I["indexer (Claude/Copilot)<br/>ingest/ + graph/ — the write path"]
     R["retrieval (Claude/Copilot)<br/>embeddings/ retrieval/ agents/ cli/ — the read path"]
     V["reviewer (Claude)<br/>adversarial read on escalation paths"]
@@ -53,13 +53,22 @@ surface.
 
 ## Where authority sits
 
-**The boundary is the pull request.** Everything up to an open PR belongs to
-the agent team; merging to `master` belongs to Yash. There is no `dev` branch
-here to absorb a bad merge, so the merge itself is the irreversible step and
-stays with the human. See `docs/agent_governance.md` for the tiers.
+**The boundary is what a revert can undo.** `orchestrator` merges into
+`master` on its own authority — that is not an interruption and does not need
+Yash. What stays with him is what reverting cannot fix: credentials, `master`
+history rewrites, repository settings, and anything published outside this
+repo. See `docs/agent_governance.md` for the tiers.
+
+That is a wider grant than the Ingredion orchestrator has, which merges only
+into `dev` with staging and prod still gated. There is no `dev` here. It works
+because nothing is deployed from `master` and a bad merge costs a revert —
+but note the one thing a revert does not undo: **this repo is public**, so a
+merge publishes. A leaked credential stays leaked. That is the asymmetry
+Tier 2 exists to protect, not the merge itself.
 
 `orchestrator` is the one funnel below Yash — every other agent is reachable
-through it. It has no `Edit` or `Write` tool, deliberately.
+through it. It has no `Edit` or `Write` tool, deliberately: the agent that
+decides a change is ready is not the agent that wrote it.
 
 `reviewer` never merges and never reviews work it produced itself. On this
 repo its trigger list is short and evidence-based: destructive Cypher, node
@@ -67,6 +76,11 @@ keys and schema, repository scoping, and file-exclusion logic. Those are the
 paths where a wrong change **reports success and produces a wrong graph** —
 the failure mode that actually bit this repo, twice, on 2026-08-14. Ordinary
 code changes do not need it.
+
+Because `orchestrator` merges without a human reading the packet, a `reviewer`
+verdict on those paths is now the **last** check rather than the first of two.
+That raises what a weak verdict costs, and `reviewer.md` is written against
+that.
 
 ## The write/read split
 

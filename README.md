@@ -155,7 +155,7 @@ This repo is worked on by a small Claude Code agent team defined in
 
 | Agent | Owns |
 | --- | --- |
-| `orchestrator` | Routes work, opens PRs, assembles the merge packet. Delegates only |
+| `orchestrator` | Routes work, opens PRs, merges to `master`. Delegates only — no `Edit`/`Write` |
 | `indexer` | The write path — `ingest/`, `graph/` |
 | `retrieval` | The read path — `embeddings/`, `retrieval/`, `agents/`, `cli/` |
 | `reviewer` | Adversarial read on escalation paths. Read-only, never merges |
@@ -164,11 +164,17 @@ This repo is worked on by a small Claude Code agent team defined in
 - `docs/agent_org_chart.md` — the roster, and why it is five roles rather than seven
 - `docs/agent_governance.md` — the tiers, the escalation paths, and the evidence behind them
 
-The boundary is the pull request: everything up to an open PR belongs to the
-agent team, merging to `master` belongs to the repo owner. `reviewer` gates
-the paths where a wrong change **reports success and produces a wrong graph** —
-destructive Cypher, node keys, repository scoping, and file exclusion. That
-list is drawn from defects this repo actually shipped, not from a template.
+`orchestrator` merges into `master` on its own authority once the merge
+conditions in `.claude/agents/orchestrator.md` are met. What stays with the
+repo owner is what a revert cannot undo — credentials, `master` history
+rewrites, repository settings, and anything published outside this repo.
+
+`reviewer` gates the paths where a wrong change **reports success and produces
+a wrong graph** — destructive Cypher, node keys, repository scoping, and file
+exclusion. That list is drawn from defects this repo actually shipped, not
+from a template. Because nothing reviews a merge after `orchestrator`, on
+those paths the `reviewer` verdict is the last check rather than the first of
+two.
 
 `scout` overlaps with the [`context-scout`](https://github.com/yashmhatre/ingredion-agent-config)
 MCP server; prefer the MCP tools when a single call answers the question.

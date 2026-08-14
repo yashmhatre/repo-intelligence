@@ -4,27 +4,37 @@ Who owns which surface, what needs a second agent's read, and what needs
 Yash. This file is the authority on the tiers; each `.claude/agents/*.md`
 adds only how that role operates.
 
-## The boundary is the pull request
+## The boundary is what a revert can undo
 
-Everything up to and including an open PR against `master` belongs to the
-agent team. Merging into `master` belongs to Yash.
+`orchestrator` merges into `master` on its own authority, once the checks
+below are genuinely green and any escalation path the diff touches carries a
+`reviewer` verdict. **Merging is not an interruption and does not need Yash.**
 
-That cut is deliberately different from the one used on
-`Ingredion_Enhancement_Package`, which has a `dev` branch to absorb a bad
-merge. This repo has no such buffer: `master` is the only long-lived branch,
-so a merge here is the irreversible step and stays with the human.
+What stays with Yash is what a revert cannot undo — see Tier 2.
+
+This is a wider grant than `Ingredion_Enhancement_Package` gives its
+orchestrator, which merges only into `dev`, with staging and prod still
+gated. There is no `dev` here; `master` is the only long-lived branch. Two
+things make that workable rather than reckless: nothing is deployed from
+`master`, and a bad merge costs a revert.
+
+One thing does not survive a revert. **This repository is public**, so
+anything merged is published the moment it lands — a leaked credential is
+burned even after the commit is reverted, and a force-push to hide it is
+itself Tier 2. That asymmetry, not the merge itself, is what Tier 2 protects.
 
 ## Tiers
 
 **Tier 1 — the agent team acts.** Writing code, tests and docs on a feature
-branch; running the indexer against a local Neo4j database; opening a PR.
-No approval needed. `reviewer` gates the escalation paths listed below
-before the PR is marked ready.
+branch; running the indexer against a local Neo4j database; opening a PR;
+**merging it into `master`** once the merge conditions in
+`.claude/agents/orchestrator.md` are met. No approval needed. `reviewer`
+gates the escalation paths listed below before the merge, not before Yash
+sees it — there is no longer a human reading the packet afterwards.
 
 **Tier 2 — Yash's named sign-off.** He names the specific action; a general
 "go ahead" earlier in the conversation does not carry over.
 
-- Merging any PR into `master`
 - Anything touching the hardcoded `URI`/`USER`/`PASSWORD` in
   `graph/neo4j_loader.py`, or moving them to a real secret
 - Dropping or creating a Neo4j **database**, as opposed to clearing a
@@ -33,7 +43,12 @@ before the PR is marked ready.
   has not agreed to lose
 - Publishing anything outside this repo: pushing to a new remote, publishing
   a package, posting to an external service
-- Weakening or deleting a test, or narrowing what CI runs
+- Weakening or deleting a test, or narrowing what CI runs — the merge
+  conditions are now the only gate, so weakening them is not an ordinary
+  code change
+- Rewriting `master` history: force-push, `reset --hard`, amending a pushed
+  commit. Reverting forward is Tier 1; erasing the past is not
+- Changing repository settings, including visibility
 
 There is no Tier 3. This is a local developer tool with no deployment, no
 staging environment, and no production data. Inventing a promotion ceremony
