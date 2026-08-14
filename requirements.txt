@@ -1,0 +1,8 @@
+neo4j 
+chromadb 
+sentence-transformers 
+tree-sitter 
+tree-sitter-python 
+typer 
+rich 
+gitpython
