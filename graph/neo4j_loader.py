@@ -8,6 +8,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from ingest.parse_code import parse_python_file, list_python_files
+from ingest.parse_notebook import list_notebook_files, parse_notebook_file
 from git.exc import InvalidGitRepositoryError, NoSuchPathError
 
 from ingest.git_history import (
@@ -52,11 +53,20 @@ driver = GraphDatabase.driver(
 # and a person are the same entity across repos, and keeping them global is
 # what makes "which repos import requests" and "what has this person touched"
 # answerable.
+#
+# Table follows the same reasoning as Module: a Unity Catalog table like
+# main.sales.transactions is one physical object, and the whole value of
+# lineage is the cross-repo question ("what breaks if I change this table"),
+# which a repo-scoped Table would make permanently unanswerable. But unlike
+# Module, a bare unqualified name (`transactions`) is not safe to globalize -
+# see table_merge_key() for how the MERGE key stays collision-proof anyway.
 CONSTRAINTS = [
     ("Repository", ["path"]),
     ("File", ["path"]),
     ("Module", ["name"]),
     ("Developer", ["email"]),
+    ("Table", ["qualified_name"]),
+    ("Notebook", ["path"]),
 ]
 
 # Composite MERGE keys. Uniqueness across multiple properties is a node key
@@ -70,6 +80,8 @@ INDEXES = [
     ("Issue", ["repo", "number"]),
     ("File", ["repo"]),
     ("Commit", ["repo", "hash"]),
+    ("Notebook", ["repo"]),
+    ("Table", ["repo"]),
 ]
 
 # Every schema object this loader owns carries this prefix. Anything else in
@@ -163,6 +175,30 @@ def ensure_schema(reconcile: bool = False):
     print("Schema ready")
 
 
+def table_merge_key(table_name: str, qualified: bool, repo_key: str):
+    """The Table.qualified_name MERGE key - the one thing standing between a
+    global Table node and the .venv-1-shaped failure mode.
+
+    Table is global like Module: a real `main.sales.transactions` is one
+    physical object no matter which repo references it, and that sharing is
+    the entire point. But a *bare* name like `transactions` is not safe to
+    globalize - two repos' unrelated tables named `transactions` would MERGE
+    into one node the instant both are indexed, and nothing would raise.
+
+    The chosen fix is not to repo-scope Table (that would make the global
+    case impossible) and not to skip unqualified references (that would
+    lose real signal). It is to fold the repo's identity into the key
+    itself for the unqualified case only, so the string that reaches MERGE
+    can never collide across repos even though the label and the
+    constraint stay single. `qualified: false` is still recorded on the
+    node as an explicit, queryable ambiguity marker - this key shape is
+    what makes that marker true rather than aspirational.
+    """
+    if qualified:
+        return table_name
+    return f"{repo_key}::unqualified::{table_name}"
+
+
 def test_connection():
     with driver.session(database=DATABASE) as session:
         result = session.run(
@@ -200,15 +236,26 @@ def clear_repository(repo_key: str):
     renamed since the last run would otherwise linger forever. Module and
     Developer survive by design - they are shared across repositories - and
     any left with no remaining relationships are cleaned up below.
+
+    Table is a mixed case: qualified Table nodes are shared the same way
+    Module is and must survive, but unqualified ones are only global in
+    label - table_merge_key() folds this repo's identity into their key, so
+    they are genuinely this repo's own nodes and belong in the DETACH
+    DELETE above precisely because that key makes them un-shareable.
     """
     with driver.session(database=DATABASE) as session:
         session.run(
             """
             MATCH (n)
-            WHERE (n:File OR n:Function OR n:Class OR n:Commit OR n:Issue)
+            WHERE (n:File OR n:Function OR n:Class OR n:Commit OR n:Issue OR n:Notebook)
               AND n.repo = $repo
             DETACH DELETE n
             """,
+            repo=repo_key,
+        )
+
+        session.run(
+            "MATCH (t:Table {repo: $repo}) WHERE t.qualified = false DETACH DELETE t",
             repo=repo_key,
         )
 
@@ -217,8 +264,27 @@ def clear_repository(repo_key: str):
         # node in a database that holds many repositories.
         session.run("MATCH (m:Module) WHERE NOT (m)--() DELETE m")
         session.run("MATCH (d:Developer) WHERE NOT (d)--() DELETE d")
+        session.run("MATCH (t:Table) WHERE t.qualified = true AND NOT (t)--() DELETE t")
 
     print(f"Cleared existing graph for: {repo_key}")
+
+
+def table_params(tables, repo_key: str):
+    """Table refs from the parser, with the MERGE key computed per entry.
+
+    The parser only knows the literal text it read - whether repo_key needs
+    folding into the key is a graph-scoping decision, not a parsing one, so
+    it is applied here rather than in ingest/parse_code.py.
+    """
+    return [
+        {
+            "qualified_name": table_merge_key(t["table"], t["qualified"], repo_key),
+            "name": t["table"],
+            "qualified": t["qualified"],
+            "access": t["access"],
+        }
+        for t in tables
+    ]
 
 
 def index_parsed_file(parsed, repo_modules, repo_key):
@@ -240,6 +306,21 @@ def index_parsed_file(parsed, repo_modules, repo_key):
             repo=repo_key,
         )
 
+        # File also gets the :Notebook label when the parser recognized it
+        # as one - a Databricks .py export marker, or any .ipynb. Notebook
+        # is repo-scoped, like File, because it is a file inside a repo.
+        if parsed.get("is_notebook"):
+            session.run(
+                """
+                MERGE (f:File {path: $file_path})
+                MERGE (nb:Notebook {path: $file_path})
+                SET nb.repo = $repo
+                MERGE (f)-[:IS_NOTEBOOK]->(nb)
+                """,
+                file_path=file_path,
+                repo=repo_key,
+            )
+
         # Create top-level functions and CONTAINS relationships
         for fn in parsed["functions"]:
             session.run(
@@ -257,6 +338,21 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                     fn.repo = $repo
 
                 MERGE (f)-[:CONTAINS]->(fn)
+
+                WITH fn
+                UNWIND $tables AS tbl
+                MERGE (t:Table {qualified_name: tbl.qualified_name})
+                SET t.name = tbl.name,
+                    t.qualified = tbl.qualified
+                FOREACH (_ IN CASE WHEN tbl.qualified THEN [] ELSE [1] END |
+                    SET t.repo = $repo
+                )
+                FOREACH (_ IN CASE WHEN tbl.access = "READS" THEN [1] ELSE [] END |
+                    MERGE (fn)-[:READS]->(t)
+                )
+                FOREACH (_ IN CASE WHEN tbl.access = "WRITES" THEN [1] ELSE [] END |
+                    MERGE (fn)-[:WRITES]->(t)
+                )
                 """,
                 file_path=file_path,
                 function_name=fn["name"],
@@ -265,6 +361,7 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                 qualname=fn["qualname"],
                 calls=fn["calls"],
                 repo=repo_key,
+                tables=table_params(fn.get("tables", []), repo_key),
             )
 
         # Create classes, DEFINES relationships and their methods
@@ -304,6 +401,21 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                         fn.repo = $repo
 
                     MERGE (c)-[:CONTAINS]->(fn)
+
+                    WITH fn
+                    UNWIND $tables AS tbl
+                    MERGE (t:Table {qualified_name: tbl.qualified_name})
+                    SET t.name = tbl.name,
+                        t.qualified = tbl.qualified
+                    FOREACH (_ IN CASE WHEN tbl.qualified THEN [] ELSE [1] END |
+                        SET t.repo = $repo
+                    )
+                    FOREACH (_ IN CASE WHEN tbl.access = "READS" THEN [1] ELSE [] END |
+                        MERGE (fn)-[:READS]->(t)
+                    )
+                    FOREACH (_ IN CASE WHEN tbl.access = "WRITES" THEN [1] ELSE [] END |
+                        MERGE (fn)-[:WRITES]->(t)
+                    )
                     """,
                     file_path=file_path,
                     class_name=cls["name"],
@@ -313,6 +425,7 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                     qualname=method["qualname"],
                     calls=method["calls"],
                     repo=repo_key,
+                    tables=table_params(method.get("tables", []), repo_key),
                 )
 
         # Create IMPORTS relationships, resolving local repo modules to
@@ -395,6 +508,31 @@ def link_calls(repo_key: str):
             repo=repo_key,
         )
     print("Linked function calls")
+
+
+def link_notebook_calls(repo_key: str):
+    """(:Notebook)-[:CALLS]->(:Function): what a notebook's top-level code
+    actually invokes, sourced from the synthetic "<module>" Function's
+    `calls` list - the same list, and the same naive name-based matching,
+    that link_calls() uses for ordinary CALLS edges. Scoped to one
+    repository for the identical reason: matching by bare name across the
+    whole database would link a notebook in one repo to a same-named
+    function in an unrelated one.
+    """
+    with driver.session(database=DATABASE) as session:
+        session.run(
+            """
+            MATCH (nb:Notebook {repo: $repo})<-[:IS_NOTEBOOK]-(f:File)
+            MATCH (f)-[:CONTAINS]->(mod:Function {name: "<module>", repo: $repo})
+            WHERE mod.calls IS NOT NULL
+            UNWIND mod.calls AS call_name
+            MATCH (callee:Function {repo: $repo, name: call_name})
+            WHERE callee <> mod
+            MERGE (nb)-[:CALLS]->(callee)
+            """,
+            repo=repo_key,
+        )
+    print("Linked notebook calls")
 
 
 def build_repo_modules(repo: Path, py_files):
@@ -599,7 +737,23 @@ def index_repository(repo_path: str, clean=False, skip_history=False):
             print(f"Failed: {py}")
             print(f"Reason: {e}")
 
+    notebook_files = list_notebook_files(repo)
+    print(f"Found {len(notebook_files)} notebook files to index")
+
+    for nb in notebook_files:
+
+        try:
+            parsed = parse_notebook_file(nb)
+            index_parsed_file(parsed, repo_modules, repo_key)
+
+        except (SyntaxError, UnicodeDecodeError, OSError, ValueError) as e:
+            # ValueError covers json.JSONDecodeError - a malformed .ipynb is
+            # unreadable, same tolerance as an unparseable .py file.
+            print(f"Failed: {nb}")
+            print(f"Reason: {e}")
+
     link_calls(repo_key)
+    link_notebook_calls(repo_key)
 
     if skip_history:
         print("Skipping git history")
