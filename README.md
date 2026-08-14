@@ -51,7 +51,22 @@ repo-intelligence/
 
 - Bolt URI: `neo4j://127.0.0.1:7687`
 - Database: `repo-intelligence` (the database name, not the Desktop project name)
-- Credentials are set in `graph/neo4j_loader.py` (`USER`/`PASSWORD`) — update for your local instance.
+
+All four settings read an environment variable first and fall back to the value in
+`graph/neo4j_loader.py`:
+
+| Variable | Default |
+| --- | --- |
+| `REPO_INTEL_NEO4J_URI` | `neo4j://127.0.0.1:7687` |
+| `REPO_INTEL_NEO4J_USER` | `neo4j` |
+| `REPO_INTEL_NEO4J_PASSWORD` | `repo12345` |
+| `REPO_INTEL_NEO4J_DATABASE` | `repo-intelligence` |
+
+> **Community Edition / Aura Free**: these support exactly one user database and it
+> must be named `neo4j` — `CREATE DATABASE` is Enterprise-only. Set
+> `REPO_INTEL_NEO4J_DATABASE=neo4j` or the loader will fail at connect with
+> *Database does not exist*. The default suits Neo4j Desktop, which bundles
+> Enterprise for local development.
 
 ## CLI / Indexing Workflow
 
@@ -77,7 +92,7 @@ Nodes:
 ```
 (:Repository {path, name, remote})
 (:File       {path, repo})
-(:Function   {name, file, line, end_line, calls, repo})
+(:Function   {name, qualname, file, line, end_line, calls, repo})
 (:Class      {name, file, line, repo})
 (:Module     {name})                      # global, shared across repositories
 (:Commit     {hash, message, author_name, author_email, authored_at, repo})
@@ -105,13 +120,22 @@ Relationships:
 ### How `CHANGES` is derived
 
 For each commit, the diff is taken with **zero context lines** (`-U0`) and the file is parsed *as it existed
-at that commit*, not as it exists today. Changed line ranges are then matched against that revision's
-function ranges, and the resulting names are linked to the current `Function` nodes.
+at that commit*, not as it exists today. Changed line ranges are matched against that revision's function
+ranges, and the resulting **qualified** names are linked to the current `Function` nodes.
 
-Both halves matter. Non-zero context would spill a hunk into the functions either side of an edit and blame
-them for code they never touched. Matching against *current* line numbers would misattribute every commit
-made before the code moved. Functions that have since been deleted simply have no node to link to and are
-skipped, rather than being resurrected into the code graph.
+Each of those choices fixes a specific misattribution:
+
+| Choice | Without it |
+| --- | --- |
+| Zero context lines | A hunk's range spills into the functions either side of the edit and blames them for code the commit never touched |
+| Parse at the commit, not today | Every commit made before the code moved is attributed to whatever now occupies those line numbers |
+| Qualified names (`Class.method`) | Two classes in one file that both define `run()` collapse into one target, and editing either blames both |
+| Ranges start at the first decorator | A decorator-only change falls outside the `def` range and is attributed to nothing |
+| Deletion hunks kept as a zero-width range | `+c,0` has no new-side lines, so every cleanup commit attributes to nothing and "who last changed this" skips deletions |
+| Merge commits claim nothing | Diffing a merge against its first parent reports the whole merged branch as its work, double-counting every change and returning whoever pressed merge as the author |
+
+Functions deleted since a commit have no node to link to and are skipped, rather than being resurrected
+into the code graph.
 
 `Function.calls` is a temporary list of call names captured during parsing; `link_calls()` in
 `graph/neo4j_loader.py` uses it to build `CALLS` edges by matching names across all indexed functions. This

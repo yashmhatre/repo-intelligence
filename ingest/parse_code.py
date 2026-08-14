@@ -18,6 +18,18 @@ def list_python_files(repo: Path):
     ]
 
 
+def definition_start_line(node):
+    """First line that belongs to a definition, decorators included.
+
+    `node.lineno` points at the `def`, so an edit to a decorator falls
+    outside the range and gets attributed to no function at all.
+    """
+    if node.decorator_list:
+        return min(d.lineno for d in node.decorator_list)
+
+    return node.lineno
+
+
 def extract_call_names(func_node):
     """Naive call-name extraction (no scope/type resolution)."""
     calls = []
@@ -49,7 +61,9 @@ def parse_python_source(source: str, path):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions.append({
                 "name": node.name,
+                "qualname": node.name,
                 "line": node.lineno,
+                "start_line": definition_start_line(node),
                 "end_line": node.end_lineno,
                 "calls": extract_call_names(node)
             })
@@ -60,7 +74,11 @@ def parse_python_source(source: str, path):
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     methods.append({
                         "name": item.name,
+                        # Qualified so two classes in one file can both
+                        # define run() without collapsing into one target.
+                        "qualname": f"{node.name}.{item.name}",
                         "line": item.lineno,
+                        "start_line": definition_start_line(item),
                         "end_line": item.end_lineno,
                         "calls": extract_call_names(item)
                     })
@@ -87,15 +105,21 @@ def parse_python_source(source: str, path):
 
 
 def iter_function_ranges(parsed):
-    """Flatten a parse result to (name, start_line, end_line) for every
-    function, including methods. Used to map changed line ranges onto
-    the functions that contain them."""
+    """Flatten a parse result to (qualname, start_line, end_line) for every
+    function, including methods. Used to map changed line ranges onto the
+    functions that contain them.
+
+    Yields the *qualified* name, because attribution matches these against
+    nodes in the graph: two classes in one file can each define run(), and a
+    bare name would attribute an edit in one to both. The range starts at the
+    first decorator, not at `def`.
+    """
     for fn in parsed["functions"]:
-        yield fn["name"], fn["line"], fn["end_line"]
+        yield fn["qualname"], fn["start_line"], fn["end_line"]
 
     for cls in parsed["classes"]:
         for method in cls["methods"]:
-            yield method["name"], method["line"], method["end_line"]
+            yield method["qualname"], method["start_line"], method["end_line"]
 
 
 @app.command()

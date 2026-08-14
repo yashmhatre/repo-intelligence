@@ -122,7 +122,7 @@ def test_methods_are_attributed_like_functions(repo):
 
     history = get_git_history(str(tmp_path))
 
-    assert names_for(tmp_path, history[0]) == ["gamma"]
+    assert names_for(tmp_path, history[0]) == ["Holder.gamma"]
 
 
 def test_deleted_file_attributes_nothing(repo):
@@ -156,3 +156,97 @@ def test_issue_reference_is_captured_from_a_real_commit(repo):
     from ingest.git_history import extract_issue_numbers
 
     assert extract_issue_numbers(history[0]["message"]) == [42]
+
+
+TWO_CLASSES_SAME_METHOD = '''class Alpha:
+
+    def run(self):
+        return 1
+
+
+class Beta:
+
+    def run(self):
+        return 2
+'''
+
+ALPHA_RUN_EDITED = '''class Alpha:
+
+    def run(self):
+        value = 1
+        return value
+
+
+class Beta:
+
+    def run(self):
+        return 2
+'''
+
+
+def test_same_method_name_in_two_classes_is_not_cross_attributed(repo):
+    """Editing Alpha.run must not also blame Beta.run.
+
+    Bare-name matching would attribute the commit to both, which quietly
+    breaks the "which functions the diff actually touched" claim.
+    """
+    tmp_path, git_repo = repo
+    commit_change(tmp_path, git_repo, TWO_CLASSES_SAME_METHOD, "two classes")
+    commit_change(tmp_path, git_repo, ALPHA_RUN_EDITED, "edit Alpha.run")
+
+    history = get_git_history(str(tmp_path))
+
+    assert names_for(tmp_path, history[0]) == ["Alpha.run"]
+
+
+DEAD_LINES = '''def alpha():
+    unused = 1
+    dead = 2
+    return 3
+
+
+def beta():
+    return 4
+'''
+
+DEAD_LINES_REMOVED = '''def alpha():
+    return 3
+
+
+def beta():
+    return 4
+'''
+
+
+def test_a_deletion_only_commit_still_attributes_to_the_function(repo):
+    tmp_path, git_repo = repo
+    commit_change(tmp_path, git_repo, DEAD_LINES, "add dead lines")
+    commit_change(tmp_path, git_repo, DEAD_LINES_REMOVED, "remove dead lines")
+
+    history = get_git_history(str(tmp_path))
+
+    assert names_for(tmp_path, history[0]) == ["alpha"]
+
+
+def test_a_merge_commit_claims_nothing(repo):
+    """Otherwise every merged change is counted twice.
+
+    Diffing a merge against its first parent reports the whole merged
+    branch as the merge commit's work, so "who last changed beta" would
+    return whoever pressed merge rather than the author.
+    """
+    tmp_path, git_repo = repo
+
+    main_branch = git_repo.active_branch.name
+    git_repo.create_head("feat").checkout()
+    commit_change(tmp_path, git_repo, BETA_EDITED, "edit beta on a branch")
+
+    git_repo.heads[main_branch].checkout()
+    git_repo.git.merge("feat", "--no-ff", "-m", "merge feat")
+
+    history = get_git_history(str(tmp_path))
+    merge_commit = history[0]
+
+    assert merge_commit["is_merge"] is True
+    assert merge_commit["changed_files"] == []
+    assert merge_commit["changed_ranges"] == {}

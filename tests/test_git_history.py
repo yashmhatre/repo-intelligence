@@ -32,12 +32,22 @@ def test_hunk_ranges_with_omitted_count_means_one_line():
     assert parse_hunk_ranges(patch) == [(7, 7)]
 
 
-def test_pure_deletion_hunk_contributes_no_new_side_range():
-    # +0 on the new side: the lines are gone, so there is nothing to
-    # attribute to a function at this revision.
-    patch = "@@ -5,3 +4,0 @@\n-gone\n"
+def test_pure_deletion_hunk_is_a_zero_width_range():
+    """A deletion still changed the function it was removed from.
 
-    assert parse_hunk_ranges(patch) == []
+    Dropping these would make "who last changed this function" silently
+    skip every cleanup commit.
+    """
+    patch = "@@ -5,3 +4,0 @@" + chr(10) + "-gone" + chr(10)
+
+    assert parse_hunk_ranges(patch) == [(4, 4)]
+
+
+def test_deletion_at_start_of_file_clamps_to_line_one():
+    # Git reports +0,0 when the very first lines of a file are removed.
+    patch = "@@ -1,2 +0,0 @@" + chr(10) + "-gone" + chr(10)
+
+    assert parse_hunk_ranges(patch) == [(1, 1)]
 
 
 def test_multiple_hunks():

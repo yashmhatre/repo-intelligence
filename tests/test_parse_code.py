@@ -43,12 +43,58 @@ def test_iter_function_ranges_includes_methods():
     ranges = {name: (start, end) for name, start, end in iter_function_ranges(parsed)}
 
     assert ranges["top_level"] == (5, 6)
-    assert ranges["method_one"] == (11, 12)
+    # Methods are yielded qualified, so two classes in one file can each
+    # define the same method name without collapsing into one target.
+    assert ranges["Widget.method_one"] == (11, 12)
     # async methods count too
-    assert ranges["method_two"] == (14, 15)
+    assert ranges["Widget.method_two"] == (14, 15)
 
 
 def test_imports_are_collected():
     parsed = parse_python_source(SOURCE, "sample.py")
 
     assert parsed["imports"] == ["os", "pathlib"]
+
+
+SAME_NAME_IN_TWO_CLASSES = '''class Alpha:
+
+    def run(self):
+        return 1
+
+
+class Beta:
+
+    def run(self):
+        return 2
+'''
+
+
+def test_same_method_name_in_two_classes_stays_distinct():
+    parsed = parse_python_source(SAME_NAME_IN_TWO_CLASSES, "sample.py")
+
+    names = [name for name, _, _ in iter_function_ranges(parsed)]
+
+    assert names == ["Alpha.run", "Beta.run"]
+
+
+DECORATED = '''import functools
+
+
+@functools.lru_cache(maxsize=8)
+def fetch():
+    return 1
+'''
+
+
+def test_range_starts_at_the_decorator_not_the_def():
+    """Editing a decorator edits the function.
+
+    node.lineno points at `def`, so a decorator-only change would fall
+    outside the range and be attributed to nothing.
+    """
+    parsed = parse_python_source(DECORATED, "sample.py")
+
+    ranges = {name: (start, end) for name, start, end in iter_function_ranges(parsed)}
+
+    # decorator is line 4, def is line 5
+    assert ranges["fetch"][0] == 4

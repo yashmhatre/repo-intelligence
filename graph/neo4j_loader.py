@@ -1,14 +1,18 @@
 from neo4j import GraphDatabase
 from pathlib import Path
 import argparse
+import os
 import sys
 
 # Allow imports from project root
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from ingest.parse_code import parse_python_file, list_python_files
+from git.exc import InvalidGitRepositoryError, NoSuchPathError
+
 from ingest.git_history import (
     get_git_history,
+    ensure_git_repository,
     get_remote_url,
     changed_function_names,
     resolve_git_file_path,
@@ -16,14 +20,18 @@ from ingest.git_history import (
 )
 
 
-URI = "neo4j://127.0.0.1:7687"
-USER = "neo4j"
-PASSWORD = "repo12345"
+URI = os.environ.get("REPO_INTEL_NEO4J_URI", "neo4j://127.0.0.1:7687")
+USER = os.environ.get("REPO_INTEL_NEO4J_USER", "neo4j")
+PASSWORD = os.environ.get("REPO_INTEL_NEO4J_PASSWORD", "repo12345")
 
 # IMPORTANT:
 # This is the Neo4j DATABASE name, not necessarily the
 # Neo4j Desktop DBMS/project name.
-DATABASE = "repo-intelligence"
+#
+# Neo4j Community Edition and Aura Free support exactly one user database,
+# and it must be called "neo4j" - CREATE DATABASE is Enterprise-only. If you
+# are not on Desktop or Enterprise, set REPO_INTEL_NEO4J_DATABASE=neo4j.
+DATABASE = os.environ.get("REPO_INTEL_NEO4J_DATABASE", "repo-intelligence")
 
 driver = GraphDatabase.driver(
     URI,
@@ -37,24 +45,28 @@ driver = GraphDatabase.driver(
 # Developer are deliberately NOT scoped - a shared dependency and a person are
 # the same entity across repos, and keeping them global is what makes
 # "which repos import requests" and "what has this person touched" answerable.
+# Named explicitly rather than by list position. CREATE ... IF NOT EXISTS
+# no-ops on the *name*, so a positional name would silently leave an old
+# definition in place under a new intent when an entry is inserted.
 CONSTRAINTS = [
-    "FOR (r:Repository) REQUIRE r.path IS UNIQUE",
-    "FOR (f:File) REQUIRE f.path IS UNIQUE",
-    "FOR (m:Module) REQUIRE m.name IS UNIQUE",
-    "FOR (c:Commit) REQUIRE c.hash IS UNIQUE",
-    "FOR (d:Developer) REQUIRE d.email IS UNIQUE",
+    ("repo_unique_path", "FOR (r:Repository) REQUIRE r.path IS UNIQUE"),
+    ("file_unique_path", "FOR (f:File) REQUIRE f.path IS UNIQUE"),
+    ("module_unique_name", "FOR (m:Module) REQUIRE m.name IS UNIQUE"),
+    ("commit_unique_hash", "FOR (c:Commit) REQUIRE c.hash IS UNIQUE"),
+    ("developer_unique_email", "FOR (d:Developer) REQUIRE d.email IS UNIQUE"),
 ]
 
 # Composite MERGE keys. Uniqueness across multiple properties is a node key
 # constraint, which is Enterprise-only, so these are plain indexes - they
 # make each MERGE a lookup instead of a full label scan.
 INDEXES = [
-    "FOR (fn:Function) ON (fn.name, fn.file, fn.line)",
-    "FOR (fn:Function) ON (fn.repo, fn.name)",
-    "FOR (c:Class) ON (c.name, c.file)",
-    "FOR (i:Issue) ON (i.repo, i.number)",
-    "FOR (f:File) ON (f.repo)",
-    "FOR (c:Commit) ON (c.repo)",
+    ("function_key", "FOR (fn:Function) ON (fn.name, fn.file, fn.line)"),
+    ("function_repo_name", "FOR (fn:Function) ON (fn.repo, fn.name)"),
+    ("function_qualname", "FOR (fn:Function) ON (fn.file, fn.qualname)"),
+    ("class_name_file", "FOR (c:Class) ON (c.name, c.file)"),
+    ("issue_repo_number", "FOR (i:Issue) ON (i.repo, i.number)"),
+    ("file_repo", "FOR (f:File) ON (f.repo)"),
+    ("commit_repo", "FOR (c:Commit) ON (c.repo)"),
 ]
 
 
@@ -70,14 +82,14 @@ def ensure_schema():
     """Idempotent - safe to run on every index."""
     with driver.session(database=DATABASE) as session:
 
-        for i, body in enumerate(CONSTRAINTS):
+        for name, body in CONSTRAINTS:
             session.run(
-                f"CREATE CONSTRAINT repo_intel_c{i} IF NOT EXISTS {body}"
+                f"CREATE CONSTRAINT repo_intel_{name} IF NOT EXISTS {body}"
             )
 
-        for i, body in enumerate(INDEXES):
+        for name, body in INDEXES:
             session.run(
-                f"CREATE INDEX repo_intel_i{i} IF NOT EXISTS {body}"
+                f"CREATE INDEX repo_intel_{name} IF NOT EXISTS {body}"
             )
 
     print("Schema ready")
@@ -88,8 +100,14 @@ def register_repository(repo_key: str, name: str, remote=None):
         session.run(
             """
             MERGE (r:Repository {path: $path})
-            SET r.name = $name,
-                r.remote = $remote
+            SET r.name = $name
+
+            // SET prop = null REMOVES the property in Cypher, so a run that
+            // could not determine the remote must leave the stored one alone
+            // rather than overwrite it with null.
+            FOREACH (_ IN CASE WHEN $remote IS NULL THEN [] ELSE [1] END |
+                SET r.remote = $remote
+            )
             """,
             path=repo_key,
             name=name,
@@ -118,14 +136,11 @@ def clear_repository(repo_key: str):
             repo=repo_key,
         )
 
-        # Shared nodes that no longer connect to anything.
-        session.run(
-            """
-            MATCH (n)
-            WHERE (n:Module OR n:Developer) AND NOT (n)--()
-            DELETE n
-            """
-        )
+        # Shared nodes that no longer connect to anything. Split by label so
+        # each is an index-backed label scan rather than one scan of every
+        # node in a database that holds many repositories.
+        session.run("MATCH (m:Module) WHERE NOT (m)--() DELETE m")
+        session.run("MATCH (d:Developer) WHERE NOT (d)--() DELETE d")
 
     print(f"Cleared existing graph for: {repo_key}")
 
@@ -162,6 +177,7 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                 })
                 SET fn.calls = $calls,
                     fn.end_line = $end_line,
+                    fn.qualname = $qualname,
                     fn.repo = $repo
 
                 MERGE (f)-[:CONTAINS]->(fn)
@@ -170,6 +186,7 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                 function_name=fn["name"],
                 line=fn["line"],
                 end_line=fn["end_line"],
+                qualname=fn["qualname"],
                 calls=fn["calls"],
                 repo=repo_key,
             )
@@ -207,6 +224,7 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                     })
                     SET fn.calls = $calls,
                         fn.end_line = $end_line,
+                        fn.qualname = $qualname,
                         fn.repo = $repo
 
                     MERGE (c)-[:CONTAINS]->(fn)
@@ -216,6 +234,7 @@ def index_parsed_file(parsed, repo_modules, repo_key):
                     method_name=method["name"],
                     line=method["line"],
                     end_line=method["end_line"],
+                    qualname=method["qualname"],
                     calls=method["calls"],
                     repo=repo_key,
                 )
@@ -354,6 +373,8 @@ def index_git_history(repo_path: str, repo_key: str):
             # Both MATCH rather than MERGE: a path that no longer exists in
             # the working tree has no node, and inventing one would put
             # history-only files into the code graph.
+            # A merge commit reports its whole merged branch as its own
+            # work, so it claims no files or functions - see get_git_history.
             for git_path in commit["changed_files"]:
 
                 file_path = resolve_git_file_path(repo, git_path)
@@ -377,27 +398,49 @@ def index_git_history(repo_path: str, repo_key: str):
 
                 ranges = commit["changed_ranges"][git_path]
 
-                for name in changed_function_names(
+                for qualname in changed_function_names(
                     repo_path, commit["hash"], git_path, ranges
                 ):
+                    # Matched on the qualified name: two classes in one file
+                    # can each define run(), and a bare name would attribute
+                    # an edit in one of them to both.
                     session.run(
                         """
                         MATCH (c:Commit {hash: $hash})
                         MATCH (fn:Function {
-                            name: $name,
+                            qualname: $qualname,
                             file: $file_path
                         })
                         MERGE (c)-[:CHANGES]->(fn)
                         """,
                         hash=commit["hash"],
-                        name=name,
+                        qualname=qualname,
                         file_path=file_path,
                     )
 
             print(f"Indexed commit: {commit['hash'][:10]}")
 
 
+class ContradictoryOptions(ValueError):
+    pass
+
+
 def index_repository(repo_path: str, clean=False, skip_history=False):
+
+    # --clean deletes the File and Function nodes that MODIFIES and CHANGES
+    # point at, and DETACH DELETE takes those relationships with them.
+    # --skip-history then never rebuilds them, so the run would leave Commit
+    # nodes attached to nothing and quietly answer "who last changed this"
+    # with silence. Keeping the Commit nodes does not help; the edges are
+    # the part that is lost.
+    if clean and skip_history:
+        raise ContradictoryOptions(
+            "--clean and --skip-history cannot be combined: --clean removes "
+            "the code nodes that commit history links to, and --skip-history "
+            "will not rebuild those links. Run --clean on its own to rebuild "
+            "everything, or --skip-history on its own to refresh the code "
+            "graph in place."
+        )
 
     repo = Path(repo_path).resolve()
 
@@ -409,13 +452,15 @@ def index_repository(repo_path: str, clean=False, skip_history=False):
 
     ensure_schema()
 
+    # Fetched regardless of skip_history: register_repository would otherwise
+    # be handed None and, before the FOREACH guard, wipe a remote recorded by
+    # an earlier full run.
     remote = None
 
-    if not skip_history:
-        try:
-            remote = get_remote_url(repo_path)
-        except Exception as e:
-            print(f"No git remote detected: {e}")
+    try:
+        remote = get_remote_url(repo_path)
+    except Exception as e:
+        print(f"No git remote detected: {e}")
 
     register_repository(repo_key, repo.name, remote)
 
@@ -444,12 +489,16 @@ def index_repository(repo_path: str, clean=False, skip_history=False):
         print("Skipping git history")
         return
 
+    # Only repository *discovery* is tolerated. A write failure part-way
+    # through the commit loop must not print a friendly message and exit 0,
+    # leaving a half-indexed history that looks complete.
     try:
-        index_git_history(str(repo), repo_key)
-    except Exception as e:
-        # A directory that isn't a git repository still has a usable code
-        # graph - don't throw that away over missing history.
-        print(f"Skipped git history: {e}")
+        ensure_git_repository(str(repo))
+    except (InvalidGitRepositoryError, NoSuchPathError) as e:
+        print(f"Skipped git history, not a git repository: {e}")
+        return
+
+    index_git_history(str(repo), repo_key)
 
 
 if __name__ == "__main__":
@@ -477,8 +526,11 @@ if __name__ == "__main__":
 
     test_connection()
 
-    index_repository(
-        args.repo_path,
-        clean=args.clean,
-        skip_history=args.skip_history,
-    )
+    try:
+        index_repository(
+            args.repo_path,
+            clean=args.clean,
+            skip_history=args.skip_history,
+        )
+    except ContradictoryOptions as e:
+        parser.error(str(e))

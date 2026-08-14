@@ -27,11 +27,23 @@ def _repo(repo_path):
     return _REPO_CACHE[key]
 
 
+def ensure_git_repository(repo_path: str):
+    """Open the repo and raise if it isn't one.
+
+    Discovery only - the Repo object is cached, so the walk that follows
+    reuses it rather than paying for a second traversal.
+    """
+    return _repo(repo_path)
+
+
 def parse_hunk_ranges(patch_text: str):
     """Extract (start, end) line ranges on the new side of a unified diff.
 
-    A hunk with a zero line count is a pure deletion - it has no new-side
-    lines to attribute to a function, so it is skipped.
+    A hunk with a zero new-side count is a pure deletion. It still changed
+    the function it was removed from, so it is recorded as a zero-width
+    range at the line the deletion sits after, rather than dropped -
+    otherwise every cleanup commit attributes to nothing and "who last
+    changed this function" silently skips deletions.
     """
     ranges = []
 
@@ -46,6 +58,11 @@ def parse_hunk_ranges(patch_text: str):
 
         if count > 0:
             ranges.append((start, start + count - 1))
+        else:
+            # Git reports +c,0 where c is the line the removed block
+            # followed; c is 0 only when the file's first lines went.
+            point = max(start, 1)
+            ranges.append((point, point))
 
     return ranges
 
@@ -63,7 +80,18 @@ def get_git_history(repo_path: str):
         # it counts as changed.
         changed_ranges = {}
 
-        if commit.parents:
+        is_merge = len(commit.parents) > 1
+
+        if is_merge:
+            # Diffing a merge against its first parent reports the entire
+            # merged branch as this commit's work, so every merged change
+            # would be counted twice - once for the commit that made it and
+            # once for whoever pressed merge. The individual commits are
+            # already in the history with their own attribution, so the
+            # merge itself claims nothing.
+            pass
+
+        elif commit.parents:
             parent = commit.parents[0]
             # unified=0 is load-bearing: with the default 3 lines of
             # context, a hunk's range spills into the functions either side
@@ -102,6 +130,7 @@ def get_git_history(repo_path: str):
             "authored_at": commit.authored_datetime.isoformat(),
             "changed_files": sorted(set(changed_files)),
             "changed_ranges": changed_ranges,
+            "is_merge": is_merge,
         })
 
     return commits
@@ -191,15 +220,6 @@ def extract_issue_numbers(message: str):
         for number in re.findall(r"(?<![\w-])#(\d+)\b", message)
     })
 
-
-def list_git_files(repo_path: str):
-    repo = _repo(repo_path)
-
-    return [
-        Path(item.strip()).as_posix()
-        for item in repo.git.ls_files().splitlines()
-        if item.strip()
-    ]
 
 
 if __name__ == "__main__":
