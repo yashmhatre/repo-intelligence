@@ -14,11 +14,11 @@ Usage::
     embed_repository("/path/to/repo", repo_id="myrepo")
 
     # Semantic search scoped to one repo:
-    from embeddings.embed import get_collection, DEFAULT_CHROMA_PATH
-    results = get_collection().query(
-        query_texts=["authenticate user"],
+    from embeddings.embed import query
+    results = query(
+        "authenticate user",
+        repo_id="myrepo",
         n_results=5,
-        where={"repo": "myrepo"},
     )
 
 The ``embedding_function`` parameter accepted by :func:`get_collection`,
@@ -154,12 +154,15 @@ def _iter_chunks(
                 "file": rel_path,
                 "kind": "file",
                 "start_line": 1,
-                "end_line": len(source_lines) or 0,
+                "end_line": len(source_lines),
             },
         )
 
         # --- function-level chunks ---
-        def _fn_chunks(functions: list[dict], prefix: str = "") -> None:
+        def _fn_chunks(
+            functions: list[dict],
+            prefix: str = "",
+        ) -> Iterable[tuple[str, str, dict]]:
             for fn in functions:
                 qname = f"{prefix}{fn['qualname']}" if prefix else fn["qualname"]
                 start = fn.get("start_line", fn["line"])
