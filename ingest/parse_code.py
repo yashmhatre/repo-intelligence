@@ -31,7 +31,11 @@ def extract_call_names(func_node):
 
 
 def parse_python_file(path: Path):
-    source = path.read_text(encoding="utf-8")
+    return parse_python_source(path.read_text(encoding="utf-8"), path)
+
+
+def parse_python_source(source: str, path):
+    """Parse already-loaded source. Used for both on-disk files and git blobs."""
     tree = ast.parse(source)
 
     functions = []
@@ -46,6 +50,7 @@ def parse_python_file(path: Path):
             functions.append({
                 "name": node.name,
                 "line": node.lineno,
+                "end_line": node.end_lineno,
                 "calls": extract_call_names(node)
             })
 
@@ -56,6 +61,7 @@ def parse_python_file(path: Path):
                     methods.append({
                         "name": item.name,
                         "line": item.lineno,
+                        "end_line": item.end_lineno,
                         "calls": extract_call_names(item)
                     })
             classes.append({
@@ -78,6 +84,18 @@ def parse_python_file(path: Path):
         "classes": classes,
         "imports": imports
     }
+
+
+def iter_function_ranges(parsed):
+    """Flatten a parse result to (name, start_line, end_line) for every
+    function, including methods. Used to map changed line ranges onto
+    the functions that contain them."""
+    for fn in parsed["functions"]:
+        yield fn["name"], fn["line"], fn["end_line"]
+
+    for cls in parsed["classes"]:
+        for method in cls["methods"]:
+            yield method["name"], method["line"], method["end_line"]
 
 
 @app.command()

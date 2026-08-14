@@ -6,3 +6,4 @@ data/
 .neo4j/
 .vscode/
 .idea/
+.pytest_cache/

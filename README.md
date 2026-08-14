@@ -29,8 +29,9 @@ semantically similar?". Every piece of retrieved context should be traceable bac
 
 ```
 repo-intelligence/
-├── ingest/          # parse_code.py (AST parser), git_history.py (planned)
+├── ingest/          # parse_code.py (AST parser), git_history.py (git ingestion)
 ├── graph/           # neo4j_loader.py — loads parsed data into Neo4j
+├── tests/           # pytest suite
 ├── embeddings/       # planned: Chroma embedding pipeline
 ├── retrieval/        # planned: graph + vector retrieval layer
 ├── agents/           # planned: agent-facing context assembly
@@ -49,7 +50,7 @@ repo-intelligence/
 ### Neo4j Setup
 
 - Bolt URI: `neo4j://127.0.0.1:7687`
-- Database: `neo4j` (the database name, not the Desktop project name)
+- Database: `repo-intelligence` (the database name, not the Desktop project name)
 - Credentials are set in `graph/neo4j_loader.py` (`USER`/`PASSWORD`) — update for your local instance.
 
 ## CLI / Indexing Workflow
@@ -74,22 +75,43 @@ you want to index. `.venv`/`venv`/`env`, `__pycache__`, `.git`, `cache`, and `da
 Nodes:
 
 ```
-(:File   {path})
-(:Function {name, file, line, calls})
-(:Class  {name, file, line})
-(:Module {name})
+(:Repository {path, name, remote})
+(:File       {path, repo})
+(:Function   {name, file, line, end_line, calls, repo})
+(:Class      {name, file, line, repo})
+(:Module     {name})                      # global, shared across repositories
+(:Commit     {hash, message, author_name, author_email, authored_at, repo})
+(:Developer  {email, name})               # global, shared across repositories
+(:Issue      {repo, number})
 ```
 
 Relationships:
 
 ```
+(:Repository)-[:HAS_FILE]->(:File)
+(:Repository)-[:HAS_COMMIT]->(:Commit)
 (:File)-[:CONTAINS]->(:Function)      # top-level functions
 (:File)-[:DEFINES]->(:Class)
 (:Class)-[:CONTAINS]->(:Function)     # methods
 (:File)-[:IMPORTS]->(:File)           # import resolves to another file in this repo
 (:File)-[:IMPORTS]->(:Module)         # import is external (stdlib/3rd-party)
 (:Function)-[:CALLS]->(:Function)     # naive, name-based matching (no type/scope resolution yet)
+(:Commit)-[:MODIFIES]->(:File)
+(:Commit)-[:CHANGES]->(:Function)     # which functions the commit's diff actually touched
+(:Commit)-[:AUTHORED_BY]->(:Developer)
+(:Commit)-[:REFERENCES]->(:Issue)     # parsed from "#12" / "Fixes #12" in the message
 ```
+
+### How `CHANGES` is derived
+
+For each commit, the diff is taken with **zero context lines** (`-U0`) and the file is parsed *as it existed
+at that commit*, not as it exists today. Changed line ranges are then matched against that revision's
+function ranges, and the resulting names are linked to the current `Function` nodes.
+
+Both halves matter. Non-zero context would spill a hunk into the functions either side of an edit and blame
+them for code they never touched. Matching against *current* line numbers would misattribute every commit
+made before the code moved. Functions that have since been deleted simply have no node to link to and are
+skipped, rather than being resurrected into the code graph.
 
 `Function.calls` is a temporary list of call names captured during parsing; `link_calls()` in
 `graph/neo4j_loader.py` uses it to build `CALLS` edges by matching names across all indexed functions. This
@@ -131,6 +153,38 @@ MATCH (f:File)-[:DEFINES]->(c:Class)-[:CONTAINS]->(m:Function)
 RETURN f.path, c.name, m.name
 ```
 
+Who last changed a function:
+
+```cypher
+MATCH (c:Commit)-[:CHANGES]->(fn:Function {name: "link_calls"})
+MATCH (c)-[:AUTHORED_BY]->(d:Developer)
+RETURN d.name, c.authored_at, c.message
+ORDER BY c.authored_at DESC
+LIMIT 1
+```
+
+Which files changed when an issue was worked on:
+
+```cypher
+MATCH (i:Issue {number: 1})<-[:REFERENCES]-(c:Commit)-[:MODIFIES]->(f:File)
+RETURN DISTINCT f.path
+```
+
+What a developer has touched, across every indexed repository:
+
+```cypher
+MATCH (d:Developer {email: "you@example.com"})<-[:AUTHORED_BY]-(c:Commit)
+RETURN c.repo, count(c) AS commits
+ORDER BY commits DESC
+```
+
+Which repositories depend on a third-party module:
+
+```cypher
+MATCH (r:Repository)-[:HAS_FILE]->(:File)-[:IMPORTS]->(m:Module {name: "neo4j"})
+RETURN DISTINCT r.name
+```
+
 ## Token-Efficiency Strategy
 
 Instead of letting an agent search the whole repository, Repo Intelligence answers structural questions
@@ -141,9 +195,9 @@ sending full file contents or the whole repo to the LLM.
 
 ## Roadmap
 
-1. **Code graph (current stage)** — File/Function/Class/Module nodes; CONTAINS, DEFINES, IMPORTS, CALLS. ✅
-2. Git history — Commit/Issue/Developer nodes; MODIFIES/CHANGES/REFERENCES relationships.
-3. Databricks/SQL awareness — READS/WRITES relationships to Delta tables, notebooks, jobs, Unity Catalog objects.
+1. **Code graph** — File/Function/Class/Module nodes; CONTAINS, DEFINES, IMPORTS, CALLS. ✅
+2. **Git history** — Commit/Issue/Developer nodes; MODIFIES/CHANGES/REFERENCES/AUTHORED_BY relationships. ✅
+3. Databricks/SQL awareness (current stage) — READS/WRITES relationships to Delta tables, notebooks, jobs, Unity Catalog objects.
 4. Chroma embeddings for semantic retrieval.
 5. Retrieval layer combining graph + vector search into compact context packages.
 6. Ollama-backed summarization/classification for retrieval and agent context.
