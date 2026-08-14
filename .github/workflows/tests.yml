@@ -1,0 +1,52 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+# A newer push to the same branch supersedes an in-flight run.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is the target platform; Linux catches path assumptions
+        # that only hold with backslashes.
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # requirements.txt pulls sentence-transformers, and with it torch.
+      # The tests need none of that, so CI installs only what they import.
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+
+      # tests/test_changed_functions.py builds real throwaway git repos.
+      # GitPython needs an identity available before it will commit.
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "repo-intelligence CI"
+          git config --global init.defaultBranch main
+
+      - name: Run tests
+        run: python -m pytest tests -q
+
+      # The loader is not covered by the suite because it needs a live Neo4j.
+      # Importing it at least catches a syntax error or a bad import before
+      # it reaches master.
+      - name: Import check on the loader
+        run: python -c "import graph.neo4j_loader; print('loader imports cleanly')"
