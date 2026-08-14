@@ -1,0 +1,6 @@
+# Only what the test suite actually imports. The full requirements.txt
+# pulls sentence-transformers (and torch with it), which no test needs.
+pytest
+gitpython
+typer
+neo4j

@@ -6,4 +6,5 @@ data/
 .neo4j/
 .vscode/
 .idea/
+.pytest_cache/
 .claude/settings.local.json
