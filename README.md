@@ -227,6 +227,45 @@ sending full file contents or the whole repo to the LLM.
 5. Retrieval layer combining graph + vector search into compact context packages.
 6. Ollama-backed summarization/classification for retrieval and agent context.
 
+## Agent Team
+
+This repo is worked on by a small Claude Code agent team defined in
+`.claude/agents/`. Five roles, split by the surfaces this project actually has:
+
+| Agent | Owns | Runs on |
+| --- | --- | --- |
+| `orchestrator` | Routes work, opens PRs, merges to `master`. Delegates only — no `Edit`/`Write` | Claude Code |
+| `indexer` | The write path — `ingest/`, `graph/` | **Copilot** by default |
+| `retrieval` | The read path — `embeddings/`, `retrieval/`, `agents/`, `cli/` | **Copilot** by default |
+| `reviewer` | Adversarial read on escalation paths. Read-only, never merges | Claude Code |
+| `scout` | Cheap briefs and read-only graph queries; reading routed to local Ollama | Haiku + MCP |
+
+`indexer` and `retrieval` exist on both substrates — as Copilot agents in
+`.github/agents/` and as Claude Code subagents in `.claude/agents/`. Both read
+`CLAUDE.md`, so the rules are identical and only the cost differs;
+implementation work defaults to Copilot. `.github/instructions/*.instructions.md`
+carries the same rules into plain Copilot chat through `applyTo` globs, so
+editing anything under `graph/` picks them up without selecting an agent.
+
+- `CLAUDE.md` — the shared contract, loaded automatically by both Copilot and Claude Code
+- `docs/agent_org_chart.md` — the roster, the two substrates, and why it is five roles rather than seven
+- `docs/agent_governance.md` — the tiers, the escalation paths, and the evidence behind them
+
+`orchestrator` merges into `master` on its own authority once the merge
+conditions in `.claude/agents/orchestrator.md` are met. What stays with the
+repo owner is what a revert cannot undo — credentials, `master` history
+rewrites, repository settings, and anything published outside this repo.
+
+`reviewer` gates the paths where a wrong change **reports success and produces
+a wrong graph** — destructive Cypher, node keys, repository scoping, and file
+exclusion. That list is drawn from defects this repo actually shipped, not
+from a template. Because nothing reviews a merge after `orchestrator`, on
+those paths the `reviewer` verdict is the last check rather than the first of
+two.
+
+`scout` overlaps with the [`context-scout`](https://github.com/yashmhatre/ingredion-agent-config)
+MCP server; prefer the MCP tools when a single call answers the question.
+
 ## Troubleshooting
 
 - **Graph has far more nodes than expected**: check for stray virtual-environment folders (e.g. a leftover
