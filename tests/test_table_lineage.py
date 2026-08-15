@@ -68,7 +68,8 @@ def test_insert_overwrite_without_table_keyword_is_a_write():
         "INSERT OVERWRITE sales.t SELECT * FROM src.t"
     )
 
-    assert ("sales.t", "WRITES") in refs
+    writes = [ref for ref in refs if ref[1] == "WRITES"]
+    assert writes == [("sales.t", "WRITES")]
     assert ("src.t", "READS") in refs
 
 
@@ -80,6 +81,27 @@ def test_insert_overwrite_table_with_table_keyword_is_a_write():
 
     assert ("sales.t", "WRITES") in refs
     assert ("src.t", "READS") in refs
+
+
+def test_insert_into_table_keyword_is_a_write():
+    """TABLE is optional after INTO too (the Hive-compatible form). Requiring
+    it dropped the write edge to sales.t entirely."""
+    refs = extract_tables_from_sql(
+        "INSERT INTO TABLE sales.t SELECT * FROM src.t"
+    )
+
+    assert ("sales.t", "WRITES") in refs
+
+
+def test_insert_overwrite_directory_is_not_a_write():
+    """INSERT OVERWRITE DIRECTORY writes to a filesystem path, not a table -
+    it must not mint a spurious Table node named 'directory' or 'local'."""
+    refs = extract_tables_from_sql(
+        "INSERT OVERWRITE DIRECTORY '/mnt/out' USING parquet SELECT * FROM src.t"
+    )
+
+    writes = [ref for ref in refs if ref[1] == "WRITES"]
+    assert writes == []
 
 
 def test_select_from_is_a_read():
