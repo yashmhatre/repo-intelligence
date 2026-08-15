@@ -132,6 +132,11 @@ Relationships:
 (:Commit)-[:REFERENCES]->(:Issue)     # parsed from "#12" / "Fixes #12" in the message
 ```
 
+Only string-literal table names are detected for `READS`/`WRITES`: a name built from an f-string or a
+variable is invisible to the indexer, not guessed at. A lineage query can therefore return a fraction of a
+table's real accesses while looking complete - the same "wrong result that reports success" failure this
+project is otherwise built to avoid, relocated to query time.
+
 ### Why module-level table access attaches to `File`, not `Function`
 
 A Databricks notebook's lineage mostly lives at the top level of the file (or notebook cell), not inside a

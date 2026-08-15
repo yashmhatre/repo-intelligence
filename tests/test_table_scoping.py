@@ -7,6 +7,49 @@ entirely visible at that level - it never needed a live database to prove.
 """
 
 from graph.neo4j_loader import table_merge_key, table_params
+from ingest.parse_code import parse_python_source
+
+
+def test_two_part_name_is_not_qualified():
+    """`sales.transactions` in Spark/Unity Catalog is resolved against the
+    session's *current catalog* - a per-workspace, per-repo setting. It is
+    not a globally-meaningful identifier the way a three-part
+    `catalog.schema.table` reference is, so it must not be globalised.
+
+    A `"." in name` rule wrongly marks it qualified=True; only a
+    three-or-more-segment name should be."""
+    source = '''\
+def load():
+    return spark.table("sales.transactions")
+'''
+    parsed = parse_python_source(source, "sample.py")
+    fn = parsed["functions"][0]
+
+    assert fn["tables"] == [
+        {"table": "sales.transactions", "access": "READS", "qualified": False}
+    ]
+
+
+def test_two_part_names_from_different_repos_do_not_collide():
+    """The two-part case is the one the existing suite never covered - it
+    tested one-part and three-part but skipped exactly the case that
+    shipped broken."""
+    source = '''\
+def load():
+    return spark.table("sales.transactions")
+'''
+    parsed = parse_python_source(source, "sample.py")
+    fn = parsed["functions"][0]
+    table_entry = fn["tables"][0]
+
+    key_in_repo_a = table_merge_key(
+        table_entry["table"], table_entry["qualified"], repo_key="/repos/a"
+    )
+    key_in_repo_b = table_merge_key(
+        table_entry["table"], table_entry["qualified"], repo_key="/repos/b"
+    )
+
+    assert key_in_repo_a != key_in_repo_b
 
 
 def test_unqualified_names_from_different_repos_do_not_collide():

@@ -58,6 +58,30 @@ def test_delete_from_is_a_write_not_a_read():
     assert refs == [("main.sales.transactions", "WRITES")]
 
 
+def test_insert_overwrite_without_table_keyword_is_a_write():
+    """TABLE is optional after OVERWRITE in Spark SQL. Requiring it dropped
+    the write edge entirely - `spark.sql("INSERT OVERWRITE sales.t ...")`
+    yielded only the READS edge on the source table, so "what writes
+    sales.t?" answered nothing while the statement truncates and replaces
+    it."""
+    refs = extract_tables_from_sql(
+        "INSERT OVERWRITE sales.t SELECT * FROM src.t"
+    )
+
+    assert ("sales.t", "WRITES") in refs
+    assert ("src.t", "READS") in refs
+
+
+def test_insert_overwrite_table_with_table_keyword_is_a_write():
+    """The TABLE-keyword form must keep working alongside the optional one."""
+    refs = extract_tables_from_sql(
+        "INSERT OVERWRITE TABLE sales.t SELECT * FROM src.t"
+    )
+
+    assert ("sales.t", "WRITES") in refs
+    assert ("src.t", "READS") in refs
+
+
 def test_select_from_is_a_read():
     refs = extract_tables_from_sql("SELECT * FROM main.sales.transactions")
 

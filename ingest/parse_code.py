@@ -21,7 +21,7 @@ _QUALIFIED_IDENT = r"`?[A-Za-z_][A-Za-z0-9_]*`?(?:\.`?[A-Za-z_][A-Za-z0-9_]*`?){
 # FROM x" must be recorded as a write of x, not (also) a read, so the READ
 # pattern for FROM excludes anything immediately preceded by "DELETE ".
 _SQL_WRITE_PATTERNS = [
-    re.compile(rf"\bINSERT\s+(?:OVERWRITE\s+TABLE|INTO)\s+({_QUALIFIED_IDENT})", re.IGNORECASE),
+    re.compile(rf"\bINSERT\s+(?:OVERWRITE(?:\s+TABLE)?|INTO)\s+({_QUALIFIED_IDENT})", re.IGNORECASE),
     re.compile(rf"\bCREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?({_QUALIFIED_IDENT})", re.IGNORECASE),
     re.compile(rf"\bMERGE\s+INTO\s+({_QUALIFIED_IDENT})", re.IGNORECASE),
     re.compile(rf"\bUPDATE\s+({_QUALIFIED_IDENT})\s+SET\b", re.IGNORECASE),
@@ -121,7 +121,7 @@ def extract_table_refs(node):
         {
             "table": normalize_table_name(name),
             "access": access,
-            "qualified": "." in name,
+            "qualified": name.count(".") >= 2,
         }
         for name, access in deduped
     ]
