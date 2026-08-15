@@ -15,9 +15,10 @@ Repository → Ingestion → Neo4j (structure) + Chroma (semantics) → Retrieva
 
 ## Architecture
 
-- **Ingestion** (`ingest/`) — parses source files (Python AST today, Tree-sitter/SQL/YAML later) and Git history.
-- **Neo4j** (`graph/`) — stores repository structure and relationships (files, functions, classes, imports, calls).
-- **Chroma** (`embeddings/`, planned) — semantic search over code/doc embeddings.
+- **Ingestion** (`ingest/`) — parses source files (Python AST today, Tree-sitter/YAML later), Databricks/Jupyter
+  notebooks, PySpark/SQL table lineage, and Git history.
+- **Neo4j** (`graph/`) — stores repository structure and relationships (files, functions, classes, imports, calls, tables).
+- **Chroma** (`embeddings/`) — semantic search over code/doc embeddings.
 - **Retrieval** (`retrieval/`, planned) — combines graph traversal + semantic search into a compact context package.
 - **Ollama** (planned) — local LLM (`qwen2.5-coder:7b`) for summarization/classification, never for full-repo exploration.
 - **CLI** (`cli/`) — Typer-based entrypoints.
@@ -99,6 +100,13 @@ Nodes:
 (:Commit     {repo, hash, message, author_name, author_email, authored_at})
 (:Developer  {email, name})               # global, shared across repositories
 (:Issue      {repo, number})
+(:Notebook   {path, repo})                # repo-scoped, like File - a .py Databricks export or a .ipynb
+(:Table      {qualified_name, name, qualified, repo?})
+    # global when `qualified` is true (a real catalog.schema.table is one physical object
+    # shared across repos, like Module). `repo` is only set when `qualified` is false: an
+    # unqualified reference like `transactions` folds the indexing repo's identity into
+    # `qualified_name` so it can never MERGE with an unrelated repo's same-named table -
+    # see table_merge_key() in graph/neo4j_loader.py.
 ```
 
 Relationships:
@@ -111,12 +119,33 @@ Relationships:
 (:Class)-[:CONTAINS]->(:Function)     # methods
 (:File)-[:IMPORTS]->(:File)           # import resolves to another file in this repo
 (:File)-[:IMPORTS]->(:Module)         # import is external (stdlib/3rd-party)
+(:File)-[:IS_NOTEBOOK]->(:Notebook)   # the parser recognized this file as a notebook
 (:Function)-[:CALLS]->(:Function)     # naive, name-based matching (no type/scope resolution yet)
+(:Notebook)-[:CALLS]->(:Function)     # sourced from the owning File's module-level (top-level) calls
+(:Function)-[:READS]->(:Table)        # spark.table(...)/.sql("SELECT ... FROM ...") inside a def/method
+(:Function)-[:WRITES]->(:Table)       # .saveAsTable(...)/.insertInto(...)/SQL INSERT-MERGE-UPDATE-DELETE, inside a def/method
+(:File)-[:READS]->(:Table)            # the same access, but at module/notebook top level - no synthetic
+(:File)-[:WRITES]->(:Table)           # Function is minted to hold it; see the note below
 (:Commit)-[:MODIFIES]->(:File)
 (:Commit)-[:CHANGES]->(:Function)     # which functions the commit's diff actually touched
 (:Commit)-[:AUTHORED_BY]->(:Developer)
 (:Commit)-[:REFERENCES]->(:Issue)     # parsed from "#12" / "Fixes #12" in the message
 ```
+
+Only string-literal table names are detected for `READS`/`WRITES`: a name built from an f-string or a
+variable is invisible to the indexer, not guessed at. A lineage query can therefore return a fraction of a
+table's real accesses while looking complete - the same "wrong result that reports success" failure this
+project is otherwise built to avoid, relocated to query time.
+
+### Why module-level table access attaches to `File`, not `Function`
+
+A Databricks notebook's lineage mostly lives at the top level of the file (or notebook cell), not inside a
+`def`. That code has no `Function` node to attach a `READS`/`WRITES` edge to, and minting a synthetic
+`"<module>"` Function for it would inflate the `Function` count of every file with any top-level code -
+notebook or not - across every repository this tool has ever indexed, silently changing what a "how many
+functions" or "which functions" query returns. Module-level table access is attached to the owning `:File`
+instead: no new node label, no inflated count, same `READS`/`WRITES` relationship types. Access inside a
+real function or method still attaches to that `Function`, as it always has.
 
 ### How `CHANGES` is derived
 
