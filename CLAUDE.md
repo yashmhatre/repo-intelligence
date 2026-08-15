@@ -96,6 +96,28 @@ local Ollama model are already paid for.
 None of this applies to review on an escalation path. That is the last check
 before a public merge, and it does not economise.
 
+## Output discipline
+
+Applies on top of the role ownership above, on either substrate.
+
+- **Issues are checklists, not essays.** One `- [ ]` per single-file change.
+  Draft the issue body through `scout` rather than full reasoning — this is
+  the same cheap-read work "Spend the cheap substrates first" already routes
+  there, not a separate fast-model mode.
+- **Diffs, not files.** For a change under ~20 lines, output the unified diff
+  or the changed snippet, not the whole file. Full-file output is for new
+  files or a `reviewer` request on an escalation path.
+- **No commentary trails a diff.** State an assumption before the change, not
+  after; don't re-narrate what the diff does once it's posted.
+- **Touch only what the active checklist item requires.** No incidental
+  formatting, renames, or reflows outside its scope — including splitting a
+  file that has grown large. A large file is a note for a follow-up issue,
+  not a license to refactor mid-checkbox.
+- **A bug surfaced mid-implementation is a stop, not a new plan.** Post it to
+  the issue or PR and stop. Opening a new issue or changing scope without
+  `orchestrator` sign-off (or the repo owner, on an escalation path) is out
+  of bounds regardless of how obvious the fix looks.
+
 ## Before merging anything
 
 `orchestrator` merges into `master` on its own authority once the conditions in
